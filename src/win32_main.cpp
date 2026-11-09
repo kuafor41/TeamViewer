@@ -525,6 +525,8 @@ void createControls(HWND window) {
     TabCtrl_InsertItem(g_tabs, 0, &tab);
     tab.pszText = const_cast<LPWSTR>(L"Schedule & Automation");
     TabCtrl_InsertItem(g_tabs, 1, &tab);
+    tab.pszText = const_cast<LPWSTR>(L"Diagnostics");
+    TabCtrl_InsertItem(g_tabs, 2, &tab);
 
     g_pointerCheck = createPageControl(0, L"BUTTON", L"Enable pointer movement",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 116, 195, 24, IdPointer);
@@ -1062,8 +1064,8 @@ void showTrayMenu() {
     DestroyMenu(menu);
 }
 
-void showOrHidePageControls(bool showGeneral) {
-    showPage(showGeneral ? 0 : 1);
+void showOrHidePageControls(int page) {
+    showPage(std::clamp(page, 0, 2));
 }
 
 LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
@@ -1302,7 +1304,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_NOTIFY:
         if (reinterpret_cast<NMHDR*>(lParam)->idFrom == IdTabs &&
             reinterpret_cast<NMHDR*>(lParam)->code == TCN_SELCHANGE) {
-            showOrHidePageControls(TabCtrl_GetCurSel(g_tabs) == 0);
+            showOrHidePageControls(TabCtrl_GetCurSel(g_tabs));
             return 0;
         }
         break;
