@@ -3,6 +3,10 @@
 #include <shlobj.h>
 #include <commctrl.h>
 #include <winreg.h>
+#include <shobjidl.h>
+#include <propkey.h>
+#include <propvarutil.h>
+#include <psapi.h>
 
 #include "deskawake/motion.hpp"
 #include "deskawake/scheduler.hpp"
@@ -15,6 +19,8 @@
 #include <iterator>
 #include <utility>
 #include <limits>
+#include <sstream>
+#include <iomanip>
 #include <random>
 #include <string>
 #include <vector>
@@ -32,6 +38,16 @@ constexpr UINT_PTR kScheduleTimerId = 2;
 constexpr UINT kEngineTimerMs = 20;
 constexpr ULONGLONG kQuietPeriodMs = 1500;
 constexpr int kHotkeyId = 1;
+constexpr UINT_PTR kDiagnosticsTimerId = 3;
+constexpr UINT kDiagnosticsRefreshMs = 1000;
+constexpr wchar_t kAppUserModelId[] = L"Acrobat.Desktop";
+struct HotkeyDefinition { const wchar_t* label; UINT modifiers; UINT virtualKey; };
+constexpr std::array<HotkeyDefinition, 4> kHotkeyDefinitions{{
+    {L"Ctrl + Shift + J", MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'J'},
+    {L"Ctrl + Alt + J", MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'J'},
+    {L"Ctrl + Shift + F10", MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_F10},
+    {L"Ctrl + Alt + F12", MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F12}
+}};
 
 enum ControlId : int {
     IdTabs = 2000,
@@ -52,6 +68,7 @@ enum ControlId : int {
     IdLaunchTarget = 2033,
     IdTargetPath = 2034,
     IdTargetInterval = 2035,
+    IdHotkey = 2036,
     IdStatus = 2040,
     IdTrayShow = 2050,
     IdTrayToggle = 2051,
@@ -66,6 +83,7 @@ struct AppSettings {
     int angleDegrees{-1};
     int countdownMinutes{};
     bool autoExit{};
+    int hotkeyPreset{};
     bool scheduleEnabled{};
     unsigned int daysMask{0x3Eu};
     std::wstring startTime{L"09:00"};
@@ -85,7 +103,7 @@ HWND g_powerCheck{};
 HWND g_batteryCheck{};
 HWND g_distanceEdit{};
 HWND g_angleEdit{};
-HWND g_countdownCombo{};
+HWND g_countdownEdit{};
 HWND g_autoExitCheck{};
 HWND g_scheduleCheck{};
 HWND g_dayChecks[7]{};
@@ -95,10 +113,17 @@ HWND g_startupCheck{};
 HWND g_launchTargetCheck{};
 HWND g_targetPathEdit{};
 HWND g_targetIntervalCombo{};
+HWND g_hotkeyCombo{};
 HWND g_statusLabel{};
+HWND g_diagCpuLabel{};
+HWND g_diagMemoryLabel{};
+HWND g_diagBatteryLabel{};
+HWND g_diagInputLabel{};
+HWND g_diagSessionLabel{};
 
 std::vector<HWND> g_generalControls;
 std::vector<HWND> g_scheduleControls;
+std::vector<HWND> g_diagnosticsControls;
 HFONT g_regularFont{};
 HFONT g_titleFont{};
 HBRUSH g_backgroundBrush{};
@@ -113,12 +138,23 @@ bool g_powerRequestAttempted{};
 bool g_startedBySchedule{};
 bool g_scheduleStateKnown{};
 bool g_lastScheduleActive{};
+bool g_hotkeyRegistered{};
+bool g_comInitialized{};
 ULONGLONG g_lastPhysicalInput{};
 ULONGLONG g_nextActionAt{};
 ULONGLONG g_countdownDeadline{};
 ULONGLONG g_nextPathStepAt{};
 ULONGLONG g_lastStatusUpdate{};
 ULONGLONG g_nextTargetLaunchAt{};
+ULONGLONG g_sessionStartedAt{};
+ULONGLONG g_lastDiagnosticsUpdate{};
+ULONGLONG g_lastCpuSampleTick{};
+ULONGLONG g_physicalInputCount{};
+ULONGLONG g_sessionCount{};
+ULONGLONG g_lastKernelTime{};
+ULONGLONG g_lastUserTime{};
+double g_cpuUsagePercent{};
+SIZE_T g_workingSetBytes{};
 std::vector<deskawake::Point> g_activePath;
 std::size_t g_activePathIndex{};
 AppSettings g_settings{};
@@ -126,8 +162,71 @@ deskawake::Scheduler g_scheduler{};
 std::mt19937 g_random{std::random_device{}()};
 std::wstring g_iniPath;
 
+void updateStatusParts();
 void setStatus(const std::wstring& value) {
-    if (g_statusLabel != nullptr) SetWindowTextW(g_statusLabel, value.c_str());
+    if (g_statusLabel != nullptr) {
+        SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
+    }
+    if (g_window != nullptr) {
+        std::wstring title = L"Acrobat";
+        if (value.find(L"Paused") != std::wstring::npos) title += L" — Paused";
+        else if (g_running || value.find(L"Session active") != std::wstring::npos ||
+                 value.find(L"Started by weekly") != std::wstring::npos) title += L" — Running";
+        SetWindowTextW(g_window, title.c_str());
+    }
+    updateStatusParts();
+}
+
+void updateStatusParts() {
+    if (g_statusLabel == nullptr) return;
+    const ULONGLONG now = GetTickCount64();
+    wchar_t sessionText[96]{};
+    wchar_t nextText[64]{};
+    wchar_t powerText[64]{};
+
+    if (g_running && g_countdownDeadline != 0) {
+        const ULONGLONG remaining = g_countdownDeadline > now ? g_countdownDeadline - now : 0;
+        const ULONGLONG seconds = (remaining + 999) / 1000;
+        swprintf_s(sessionText, L"Left %02llu:%02llu:%02llu", seconds / 3600,
+            (seconds / 60) % 60, seconds % 60);
+    } else if (g_running && g_sessionStartedAt != 0) {
+        const ULONGLONG seconds = (now - g_sessionStartedAt) / 1000;
+        swprintf_s(sessionText, L"Elapsed %02llu:%02llu:%02llu", seconds / 3600,
+            (seconds / 60) % 60, seconds % 60);
+    } else wcscpy_s(sessionText, L"Session —");
+
+    if (!g_running) wcscpy_s(nextText, L"Next —");
+    else if (!g_settings.pointerEnabled) wcscpy_s(nextText, L"Power only");
+    else {
+        const ULONGLONG remaining = g_nextActionAt > now ? g_nextActionAt - now : 0;
+        swprintf_s(nextText, L"Next %02llu s", (remaining + 999) / 1000);
+    }
+
+    SYSTEM_POWER_STATUS power{};
+    if (GetSystemPowerStatus(&power)) {
+        if (power.ACLineStatus == 1) wcscpy_s(powerText, L"AC");
+        else if (power.ACLineStatus == 0 && power.BatteryLifePercent != 255)
+            swprintf_s(powerText, L"Bat %u%%", static_cast<unsigned int>(power.BatteryLifePercent));
+        else if (power.ACLineStatus == 0) wcscpy_s(powerText, L"Battery");
+        else wcscpy_s(powerText, L"Power ?");
+    } else wcscpy_s(powerText, L"Power ?");
+
+    SendMessageW(g_statusLabel, SB_SETTEXTW, 1, reinterpret_cast<LPARAM>(sessionText));
+    SendMessageW(g_statusLabel, SB_SETTEXTW, 2, reinterpret_cast<LPARAM>(nextText));
+    SendMessageW(g_statusLabel, SB_SETTEXTW, 3, reinterpret_cast<LPARAM>(powerText));
+}
+
+bool registerGlobalHotkey() {
+    if (g_window == nullptr) return false;
+    if (g_hotkeyRegistered) {
+        UnregisterHotKey(g_window, kHotkeyId);
+        g_hotkeyRegistered = false;
+    }
+    const int preset = std::clamp(g_settings.hotkeyPreset, 0,
+        static_cast<int>(kHotkeyDefinitions.size()) - 1);
+    const auto& def = kHotkeyDefinitions[static_cast<std::size_t>(preset)];
+    g_hotkeyRegistered = RegisterHotKey(g_window, kHotkeyId, def.modifiers, def.virtualKey) == TRUE;
+    return g_hotkeyRegistered;
 }
 
 std::wstring executableDirectory() {
@@ -186,6 +285,7 @@ void loadSettings() {
     g_settings.angleDegrees = std::clamp(readInt(L"Motion", L"AngleDegrees", -1), -1, 359);
     g_settings.countdownMinutes = std::clamp(readInt(L"Duration", L"CountdownMinutes", 0), 0, 1440);
     g_settings.autoExit = readInt(L"Duration", L"AutoExit", 0) != 0;
+    g_settings.hotkeyPreset = std::clamp(readInt(L"General", L"HotkeyPreset", 0), 0, 3);
     g_settings.scheduleEnabled = readInt(L"Schedule", L"Enabled", 0) != 0;
     g_settings.daysMask = static_cast<unsigned int>(readInt(L"Schedule", L"DaysMask", 0x3E)) & 0x7F;
     g_settings.startTime = readString(L"Schedule", L"Start", L"09:00");
@@ -206,6 +306,7 @@ void saveSettings() {
     writeInt(L"Motion", L"AngleDegrees", g_settings.angleDegrees);
     writeInt(L"Duration", L"CountdownMinutes", g_settings.countdownMinutes);
     writeInt(L"Duration", L"AutoExit", g_settings.autoExit ? 1 : 0);
+    writeInt(L"General", L"HotkeyPreset", g_settings.hotkeyPreset);
     writeInt(L"Schedule", L"Enabled", g_settings.scheduleEnabled ? 1 : 0);
     writeInt(L"Schedule", L"DaysMask", static_cast<int>(g_settings.daysMask));
     WritePrivateProfileStringW(L"Schedule", L"Start", g_settings.startTime.c_str(), g_iniPath.c_str());
@@ -256,11 +357,13 @@ void syncSettingsFromControls() {
     try { g_settings.angleDegrees = std::clamp(std::stoi(text), -1, 359); }
     catch (...) { g_settings.angleDegrees = -1; }
 
-    const LRESULT countdownIndex = SendMessageW(g_countdownCombo, CB_GETCURSEL, 0, 0);
-    const LRESULT countdownData = countdownIndex == CB_ERR ? 0 :
-        SendMessageW(g_countdownCombo, CB_GETITEMDATA, countdownIndex, 0);
-    g_settings.countdownMinutes = countdownData == CB_ERR ? 0 : static_cast<int>(countdownData);
+    GetWindowTextW(g_countdownEdit, text, static_cast<int>(std::size(text)));
+    try { g_settings.countdownMinutes = std::clamp(std::stoi(text), 0, 10080); }
+    catch (...) { g_settings.countdownMinutes = 0; }
     g_settings.autoExit = SendMessageW(g_autoExitCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    const LRESULT hotkeySelection = SendMessageW(g_hotkeyCombo, CB_GETCURSEL, 0, 0);
+    g_settings.hotkeyPreset = hotkeySelection == CB_ERR ? 0 :
+        std::clamp(static_cast<int>(hotkeySelection), 0, 3);
 
     g_settings.scheduleEnabled = SendMessageW(g_scheduleCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_settings.daysMask = 0;
@@ -296,13 +399,10 @@ void populateControlsFromSettings() {
     swprintf_s(number, L"%d", g_settings.angleDegrees);
     SetWindowTextW(g_angleEdit, number);
 
-    const std::array<int, 5> countdownValues{0, 30, 60, 120, 240};
-    int selected = 0;
-    for (std::size_t index = 0; index < countdownValues.size(); ++index) {
-        if (countdownValues[index] == g_settings.countdownMinutes) selected = static_cast<int>(index);
-    }
-    SendMessageW(g_countdownCombo, CB_SETCURSEL, selected, 0);
+    swprintf_s(number, L"%d", g_settings.countdownMinutes);
+    SetWindowTextW(g_countdownEdit, number);
     SendMessageW(g_autoExitCheck, BM_SETCHECK, g_settings.autoExit ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_hotkeyCombo, CB_SETCURSEL, g_settings.hotkeyPreset, 0);
 
     SendMessageW(g_scheduleCheck, BM_SETCHECK, g_settings.scheduleEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     for (int index = 0; index < 7; ++index) {
@@ -359,6 +459,7 @@ bool isScheduleActive(const SYSTEMTIME& now) {
 void showPage(int page) {
     for (HWND control : g_generalControls) ShowWindow(control, page == 0 ? SW_SHOW : SW_HIDE);
     for (HWND control : g_scheduleControls) ShowWindow(control, page == 1 ? SW_SHOW : SW_HIDE);
+    for (HWND control : g_diagnosticsControls) ShowWindow(control, page == 2 ? SW_SHOW : SW_HIDE);
 }
 
 void setControlFont(HWND control, HFONT font) {
@@ -374,7 +475,8 @@ HWND createPageControl(int page, const wchar_t* cls, const wchar_t* text, DWORD 
     );
     setControlFont(control, g_regularFont);
     if (page == 0) g_generalControls.push_back(control);
-    else g_scheduleControls.push_back(control);
+    else if (page == 1) g_scheduleControls.push_back(control);
+    else g_diagnosticsControls.push_back(control);
     return control;
 }
 
@@ -427,7 +529,7 @@ void createControls(HWND window) {
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 116, 195, 24, IdPointer);
     g_powerCheck = createPageControl(0, L"BUTTON", L"Keep display and system awake",
         WS_TABSTOP | BS_AUTOCHECKBOX, 240, 116, 220, 24, IdPower);
-    g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause pointer activity on battery",
+    g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause on battery or below 20%",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 147, 240, 24, IdBattery);
 
     createPageControl(0, L"STATIC", L"Travel distance (px)", SS_LEFT,
@@ -439,21 +541,12 @@ void createControls(HWND window) {
     g_angleEdit = createPageControl(0, L"EDIT", L"-1",
         WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 370, 187, 55, 25, IdAngle);
 
-    createPageControl(0, L"STATIC", L"Session countdown", SS_LEFT,
-        30, 243, 118, 22, 0);
-    g_countdownCombo = createPageControl(0, WC_COMBOBOXW, L"",
-        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 150, 239, 126, 110, IdCountdown);
-    const std::array<std::pair<const wchar_t*, int>, 5> countdownItems{{
-        {L"No limit", 0}, {L"30 minutes", 30}, {L"1 hour", 60},
-        {L"2 hours", 120}, {L"4 hours", 240}
-    }};
-    for (const auto& item : countdownItems) {
-        const LRESULT index = SendMessageW(g_countdownCombo, CB_ADDSTRING, 0,
-            reinterpret_cast<LPARAM>(item.first));
-        SendMessageW(g_countdownCombo, CB_SETITEMDATA, index, item.second);
-    }
-    g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit app when finished",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 295, 241, 170, 24, IdAutoExit);
+    createPageControl(0, L"STATIC", L"Session limit (min; 0 = unlimited)", SS_LEFT,
+        30, 243, 205, 22, 0);
+    g_countdownEdit = createPageControl(0, L"EDIT", L"0",
+        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 238, 239, 62, 25, IdCountdown);
+    g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit when finished",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 315, 241, 160, 24, IdAutoExit);
     createPageControl(0, L"STATIC",
         L"Physical input pauses pointer movement; Ctrl+Shift+J toggles the session.",
         SS_LEFT, 30, 286, 440, 34, 0);
@@ -493,10 +586,32 @@ void createControls(HWND window) {
         SendMessageW(g_targetIntervalCombo, CB_SETITEMDATA, index, item.second);
     }
 
-    g_statusLabel = CreateWindowW(L"STATIC", L"Stopped",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, 24, 377, 465, 24,
-        window, reinterpret_cast<HMENU>(IdStatus), nullptr, nullptr);
-    setControlFont(g_statusLabel, g_regularFont);
+    createPageControl(1, L"STATIC", L"Global shortcut", SS_LEFT,
+        30, 338, 90, 22, 0);
+    g_hotkeyCombo = createPageControl(1, WC_COMBOBOXW, L"",
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 130, 334, 170, 100, IdHotkey);
+    for (const auto& hotkey : kHotkeyDefinitions) {
+        SendMessageW(g_hotkeyCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(hotkey.label));
+    }
+
+    g_diagCpuLabel = createPageControl(2, L"STATIC", L"CPU: measuring…", SS_LEFT,
+        30, 120, 440, 24, 0);
+    g_diagMemoryLabel = createPageControl(2, L"STATIC", L"Working set: measuring…", SS_LEFT,
+        30, 155, 440, 24, 0);
+    g_diagBatteryLabel = createPageControl(2, L"STATIC", L"Power: measuring…", SS_LEFT,
+        30, 190, 440, 24, 0);
+    g_diagInputLabel = createPageControl(2, L"STATIC", L"Physical input events: 0", SS_LEFT,
+        30, 225, 440, 24, 0);
+    g_diagSessionLabel = createPageControl(2, L"STATIC", L"Session count: 0", SS_LEFT,
+        30, 260, 440, 24, 0);
+    createPageControl(2, L"STATIC",
+        L"Local diagnostics only. No EDR/UEBA detection or evasion logic is used.",
+        SS_LEFT, 30, 310, 450, 36, 0);
+
+    g_statusLabel = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
+        WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+        0, 0, 0, 0, window, reinterpret_cast<HMENU>(IdStatus),
+        GetModuleHandleW(nullptr), nullptr);
     populateControlsFromSettings();
     showPage(0);
 }
