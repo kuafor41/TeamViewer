@@ -1,4 +1,4 @@
-name: Windows x64 build
+name: Windows x64 and x86 builds
 
 on:
   push:
@@ -14,38 +14,42 @@ permissions:
   contents: read
 
 concurrency:
-  group: deskawake-windows-${{ github.ref }}
+  group: acrobat-windows-\${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
+    name: Build \${{ matrix.arch }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+          - arch: x86
+            cmake_arch: Win32
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Configure x64
-        run: cmake -S . -B build -A x64 -DDESKAWAKE_BUILD_TESTS=ON
-
+      - name: Configure
+        run: cmake -S . -B build-\${{ matrix.arch }} -A \${{ matrix.cmake_arch }} -DACROBAT_BUILD_TESTS=ON
       - name: Build Release
-        run: cmake --build build --config Release --parallel
-
+        run: cmake --build build-\${{ matrix.arch }} --config Release --parallel
       - name: Run core tests
-        run: ctest --test-dir build -C Release --output-on-failure
-
+        run: ctest --test-dir build-\${{ matrix.arch }} -C Release --output-on-failure
       - name: Assemble portable package
         shell: pwsh
         run: |
-          $package = "dist/DeskAwake-portable"
+          $package = "dist/Acrobat-\${{ matrix.arch }}-portable"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
-          Copy-Item "build/Release/DeskAwake.exe" $package
+          Copy-Item "build-\${{ matrix.arch }}/Release/Acrobat.exe" $package
           Copy-Item "README.md" $package
           Copy-Item "LICENSE" $package
-          Compress-Archive -Path "$package/*" -DestinationPath "dist/DeskAwake-win-x64-portable.zip" -Force
-
+          Compress-Archive -Path "$package/*" -DestinationPath "dist/Acrobat-win-\${{ matrix.arch }}-portable.zip" -Force
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: DeskAwake-win-x64-portable
-          path: dist/DeskAwake-win-x64-portable.zip
+          name: Acrobat-win-\${{ matrix.arch }}-portable
+          path: dist/Acrobat-win-\${{ matrix.arch }}-portable.zip
           if-no-files-found: error

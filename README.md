@@ -1,31 +1,32 @@
-# DeskAwake
+# Acrobat
 
-DeskAwake is a native Windows desktop utility for session and power management.
+Acrobat is an original, compact Windows desktop utility for pointer control and session power management. It is an independent personal project and is not affiliated with Adobe.
 
 ## Current implementation
 
-- Native Win32 x64 desktop application with an original DeskAwake identity.
-- System tray operation and a global Ctrl+Shift+J start/stop hotkey.
+- Native Win32 application targeting Windows 10/11, built separately for x64 and x86.
+- Compact UI with original Acrobat identity.
+- System tray operation and Ctrl+Shift+J start/stop hotkey.
 - Optional Windows display/system power request through SetThreadExecutionState.
 - Physical keyboard and mouse activity monitoring with automatic pause and timer reset.
 - Battery-aware pause option.
-- Bounded 10–89 second Weibull scheduler with the documented 70% / 30% action router.
-- C++20 motion core: cubic Bezier curves, S-curve easing, seeded Perlin-style noise, tremor and overshoot.
-- Core unit tests and a Windows GitHub Actions portable ZIP build.
+- Poisson scheduler using the documented equation: T_interval = min(89, max(10, Poisson(lambda = 42))).
+- 70% / 30% action router.
+- C++20 motion core: cubic Bezier curves, smoothstep S-curve easing, seeded 2D Perlin-style noise, Gaussian tremor and configurable overshoot.
+- Deterministic core tests and x64/x86 portable ZIP artifacts through GitHub Actions.
 
-The pointer-motion option is explicitly visible in the application UI. The application does not impersonate another product or include security-product bypass features.
+## Formula notes
 
-## Build
+The source document gives the Poisson arrival formula and cubic Bezier equation. It describes an S-curve, Perlin noise plus Gaussian N(0, sigma^2), and overshooting conceptually, but does not specify a unique S-curve equation, Perlin frequency/amplitude, Gaussian sigma, or overshoot distance. Those unspecified values are exposed as trajectory options; smoothstep is the current S-curve choice.
 
-See [docs/BUILDING.md](docs/BUILDING.md). The Windows workflow builds Release x64, runs the core tests, and publishes DeskAwake-win-x64-portable.zip as a workflow artifact.
+## Planned / ongoing
 
-## Planned follow-up work
-
-- Editable interval, movement distance/angle, and trajectory parameters.
-- Weekly schedule, countdown/auto-exit, and startup preferences.
-- Original application and tray icon assets.
-- Installer package and Authenticode signing preparation.
+- Weekly activation schedule and per-session countdown.
+- Auto-exit and Windows startup preference.
+- Editable movement distance/angle and scheduler settings.
+- Original icon resources and installer packaging.
+- Authenticode signing preparation.
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See LICENSE.
