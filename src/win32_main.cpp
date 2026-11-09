@@ -845,7 +845,10 @@ void updateRunningState() {
     }
 
     SYSTEM_POWER_STATUS powerStatus{};
-    const bool onBattery = GetSystemPowerStatus(&powerStatus) && powerStatus.ACLineStatus == 0;
+    const bool powerKnown = GetSystemPowerStatus(&powerStatus) == TRUE;
+    const bool onBattery = powerKnown &&
+        (powerStatus.ACLineStatus == 0 ||
+         (powerStatus.BatteryLifePercent != 255 && powerStatus.BatteryLifePercent <= 20));
     if (g_settings.pauseOnBattery && onBattery) {
         abortPath();
         g_nextActionAt = 0;
@@ -1113,6 +1116,96 @@ void saveFromUi() {
     saveSettings();
 }
 
+HRESULT addJumpTask(IObjectCollection* collection, const wchar_t* title, const wchar_t* arguments) {
+    if (collection == nullptr) return E_POINTER;
+    IShellLinkW* link = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link));
+    if (FAILED(hr)) return hr;
+
+    std::array<wchar_t, MAX_PATH> executable{};
+    const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+        static_cast<DWORD>(executable.size()));
+    if (length == 0 || length >= executable.size()) {
+        link->Release();
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+
+    hr = link->SetPath(executable.data());
+    if (SUCCEEDED(hr)) hr = link->SetArguments(arguments);
+    if (SUCCEEDED(hr)) hr = link->SetDescription(title);
+    if (SUCCEEDED(hr)) {
+        IPropertyStore* properties = nullptr;
+        hr = link->QueryInterface(IID_PPV_ARGS(&properties));
+        if (SUCCEEDED(hr)) {
+            PROPVARIANT value{};
+            hr = InitPropVariantFromString(title, &value);
+            if (SUCCEEDED(hr)) hr = properties->SetValue(PKEY_Title, value);
+            if (SUCCEEDED(hr)) hr = properties->Commit();
+            PropVariantClear(&value);
+            properties->Release();
+        }
+    }
+    if (SUCCEEDED(hr)) hr = collection->AddObject(link);
+    link->Release();
+    return hr;
+}
+
+void rebuildJumpList() {
+    ICustomDestinationList* destination = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&destination));
+    if (FAILED(hr)) return;
+
+    UINT maximumSlots{};
+    IObjectArray* removedItems = nullptr;
+    hr = destination->BeginList(&maximumSlots, IID_PPV_ARGS(&removedItems));
+    if (removedItems != nullptr) removedItems->Release();
+
+    IObjectCollection* tasks = nullptr;
+    if (SUCCEEDED(hr)) {
+        hr = CoCreateInstance(CLSID_EnumerableObjectCollection, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&tasks));
+    }
+    if (SUCCEEDED(hr)) hr = addJumpTask(tasks, L"Open Acrobat", L"--show");
+    if (SUCCEEDED(hr)) hr = addJumpTask(tasks, L"Start session", L"--start");
+    if (SUCCEEDED(hr)) hr = addJumpTask(tasks, L"Stop session", L"--stop");
+    if (SUCCEEDED(hr)) hr = addJumpTask(tasks, L"Exit Acrobat", L"--exit");
+
+    IObjectArray* taskArray = nullptr;
+    if (SUCCEEDED(hr)) hr = tasks->QueryInterface(IID_PPV_ARGS(&taskArray));
+    if (SUCCEEDED(hr)) hr = destination->AddUserTasks(taskArray);
+    if (taskArray != nullptr) taskArray->Release();
+    if (tasks != nullptr) tasks->Release();
+
+    if (SUCCEEDED(hr)) destination->CommitList();
+    else destination->AbortList();
+    destination->Release();
+}
+
+std::wstring commandFromLine(const wchar_t* commandLine) {
+    if (commandLine == nullptr) return L"show";
+    if (wcsstr(commandLine, L"--start") != nullptr) return L"start";
+    if (wcsstr(commandLine, L"--stop") != nullptr) return L"stop";
+    if (wcsstr(commandLine, L"--exit") != nullptr) return L"exit";
+    if (wcsstr(commandLine, L"--minimized") != nullptr) return L"minimized";
+    return L"show";
+}
+
+bool forwardToExistingInstance(const wchar_t* commandLine) {
+    HWND existing = FindWindowW(kWindowClass, nullptr);
+    if (existing == nullptr) return false;
+    const std::wstring command = commandFromLine(commandLine);
+    COPYDATASTRUCT data{};
+    data.dwData = 0x41435242;
+    data.cbData = static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t));
+    data.lpData = const_cast<wchar_t*>(command.c_str());
+    DWORD_PTR response{};
+    SendMessageTimeoutW(existing, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&data),
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 2500, &response);
+    return true;
+}
+
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_NCCREATE:
@@ -1148,6 +1241,22 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             updateStatusParts();
         }
         return 0;
+
+    case WM_COPYDATA: {
+        const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+        if (data == nullptr || data->dwData != 0x41435242 || data->lpData == nullptr ||
+            data->cbData < sizeof(wchar_t)) return FALSE;
+        const auto* value = static_cast<const wchar_t*>(data->lpData);
+        const std::wstring command(value);
+        if (command == L"start") startSession();
+        else if (command == L"stop") stopSession();
+        else if (command == L"exit") DestroyWindow(window);
+        else if (command == L"show") {
+            ShowWindow(window, SW_SHOW);
+            SetForegroundWindow(window);
+        }
+        return TRUE;
+    }
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
@@ -1299,7 +1408,15 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    if (forwardToExistingInstance(commandLine)) return 0;
+
     loadSettings();
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    g_comInitialized = SUCCEEDED(comResult);
+    if (g_comInitialized) {
+        SetCurrentProcessExplicitAppUserModelID(kAppUserModelId);
+        rebuildJumpList();
+    }
 
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
@@ -1325,20 +1442,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         nullptr, nullptr, instance, nullptr);
     if (g_window == nullptr) return static_cast<int>(GetLastError());
 
-    const bool startMinimized = commandLine != nullptr &&
-        (wcsstr(commandLine, L"--minimized") != nullptr);
-    if (startMinimized) {
+    const std::wstring startupCommand = commandFromLine(commandLine);
+    const bool startMinimized = startupCommand == L"minimized";
+    if (startupCommand == L"exit" || startupCommand == L"stop") {
+        DestroyWindow(g_window);
+    } else if (startMinimized) {
         addTrayIcon();
         ShowWindow(g_window, SW_HIDE);
     } else {
         ShowWindow(g_window, showCommand);
         UpdateWindow(g_window);
     }
+    if (startupCommand == L"start" && g_window != nullptr) startSession();
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    if (g_comInitialized) CoUninitialize();
     return static_cast<int>(message.wParam);
 }
