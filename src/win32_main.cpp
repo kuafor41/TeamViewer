@@ -521,7 +521,7 @@ void createControls(HWND window) {
 
     g_tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS,
-        14, 78, 572, 287, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
+        14, 78, 570, 287, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
     setControlFont(g_tabs, g_regularFont);
     TCITEMW tab{};
     tab.mask = TCIF_TEXT;
