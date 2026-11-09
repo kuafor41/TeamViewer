@@ -64,16 +64,16 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $exe = (Resolve-Path "build-\${{ matrix.arch }}/Release/Acrobat.exe").Path
+          $exe = (Resolve-Path "build-${{ matrix.arch }}/Release/Acrobat.exe").Path
           $readme = (Resolve-Path "README.md").Path
           $license = (Resolve-Path "LICENSE").Path
           $icon = (Resolve-Path "resources/acrobat.ico").Path
-          ./.tools/wix.exe build -arch \${{ matrix.wix_arch }} -d "ExePath=$exe" -d "ReadmePath=$readme" -d "LicensePath=$license" -d "IconPath=$icon" -o "dist/Acrobat-win-\${{ matrix.arch }}.msi" "installer/Acrobat.wxs"
+          ./.tools/wix.exe build -arch ${{ matrix.wix_arch }} -d "ExePath=$exe" -d "ReadmePath=$readme" -d "LicensePath=$license" -d "IconPath=$icon" -o "dist/Acrobat-win-${{ matrix.arch }}.msi" "installer/Acrobat.wxs"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: Acrobat-win-\${{ matrix.arch }}-msi
-          path: dist/Acrobat-win-\${{ matrix.arch }}.msi
+          name: Acrobat-win-${{ matrix.arch }}-msi
+          path: dist/Acrobat-win-${{ matrix.arch }}.msi
           if-no-files-found: error
 

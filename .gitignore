@@ -11,3 +11,8 @@
 *.ilk
 *.obj
 *.exe
+
+# Local .NET/WiX tool cache
+/.tools/
+/bin/
+/obj/
