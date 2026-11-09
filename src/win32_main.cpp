@@ -14,6 +14,7 @@
 #include <cwchar>
 #include <iterator>
 #include <utility>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -536,14 +537,14 @@ void launchConfiguredTarget() {
 }
 
 void runTargetIfDue(ULONGLONG now) {
-    if (!g_running || !g_settings.launchTarget || g_settings.targetPath.empty()) return;
+    if (!g_running || !g_settings.launchTarget || g_settings.targetPath.empty() ||
+        g_settings.targetIntervalMinutes <= 0) return;
     if (g_nextTargetLaunchAt == 0) {
-        launchConfiguredTarget();
-        g_nextTargetLaunchAt = now + static_cast<ULONGLONG>(
-            std::max(1, g_settings.targetIntervalMinutes)) * 60ULL * 1000ULL;
+        g_nextTargetLaunchAt = now +
+            static_cast<ULONGLONG>(g_settings.targetIntervalMinutes) * 60ULL * 1000ULL;
         return;
     }
-    if (g_settings.targetIntervalMinutes > 0 && now >= g_nextTargetLaunchAt) {
+    if (now >= g_nextTargetLaunchAt) {
         launchConfiguredTarget();
         g_nextTargetLaunchAt = now +
             static_cast<ULONGLONG>(g_settings.targetIntervalMinutes) * 60ULL * 1000ULL;
@@ -600,6 +601,8 @@ void startSession(bool fromSchedule = false) {
     if (g_settings.targetIntervalMinutes > 0) {
         g_nextTargetLaunchAt = GetTickCount64() +
             static_cast<ULONGLONG>(g_settings.targetIntervalMinutes) * 60ULL * 1000ULL;
+    } else {
+        g_nextTargetLaunchAt = std::numeric_limits<ULONGLONG>::max();
     }
 }
 
@@ -826,7 +829,7 @@ void addTrayIcon() {
     data.uID = 1;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayMessage;
-    data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101));
     if (data.hIcon == nullptr) data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     wcscpy_s(data.szTip, L"Acrobat");
     g_trayAdded = Shell_NotifyIconW(NIM_ADD, &data) == TRUE;
@@ -1002,18 +1005,19 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         if (wParam == kScheduleTimerId) {
-            saveFromUi();
             updateSchedule();
             return 0;
         }
         break;
 
     case kTrayMessage:
-        if (lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
+        if (LOWORD(lParam) == WM_RBUTTONUP || LOWORD(lParam) == WM_CONTEXTMENU ||
+            lParam == WM_RBUTTONUP || lParam == WM_CONTEXTMENU) {
             showTrayMenu();
             return 0;
         }
-        if (lParam == WM_LBUTTONDBLCLK) {
+        if (LOWORD(lParam) == WM_LBUTTONDBLCLK || LOWORD(lParam) == NIN_SELECT ||
+            lParam == WM_LBUTTONDBLCLK) {
             ShowWindow(window, SW_SHOW);
             SetForegroundWindow(window);
             return 0;
@@ -1084,7 +1088,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     windowClass.lpfnWndProc = windowProc;
     windowClass.hInstance = instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+    if (windowClass.hIcon == nullptr) windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     windowClass.hIconSm = windowClass.hIcon;
     windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     windowClass.lpszClassName = kWindowClass;
