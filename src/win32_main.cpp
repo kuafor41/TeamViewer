@@ -647,8 +647,8 @@ bool sendMicroMove() {
         const int dx = delta(g_random);
         const int dy = delta(g_random);
         if (dx == 0 && dy == 0) continue;
-        offset.x = std::clamp(current.x + dx, left, right);
-        offset.y = std::clamp(current.y + dy, top, bottom);
+        offset.x = std::clamp<int>(static_cast<int>(current.x) + dx, left, right);
+        offset.y = std::clamp<int>(static_cast<int>(current.y) + dy, top, bottom);
         if (offset.x != current.x || offset.y != current.y) break;
     }
     if (offset.x == current.x && offset.y == current.y) return false;
