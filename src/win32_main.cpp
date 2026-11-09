@@ -126,6 +126,7 @@ std::vector<HWND> g_scheduleControls;
 std::vector<HWND> g_diagnosticsControls;
 HFONT g_regularFont{};
 HFONT g_titleFont{};
+HFONT g_statusFont{};
 HBRUSH g_backgroundBrush{};
 
 HHOOK g_mouseHook{};
@@ -497,6 +498,9 @@ void createControls(HWND window) {
     g_titleFont = CreateFontW(-22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    g_statusFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
     HWND title = CreateWindowW(L"STATIC", L"Acrobat", WS_CHILD | WS_VISIBLE,
         22, 16, 220, 30, window, nullptr, nullptr, nullptr);
@@ -507,17 +511,17 @@ void createControls(HWND window) {
 
     g_startButton = CreateWindowW(L"BUTTON", L"Start session",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        320, 19, 88, 32, window, reinterpret_cast<HMENU>(IdStart), nullptr, nullptr);
+        398, 19, 88, 32, window, reinterpret_cast<HMENU>(IdStart), nullptr, nullptr);
     g_stopButton = CreateWindowW(L"BUTTON", L"Stop",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        414, 19, 74, 32, window, reinterpret_cast<HMENU>(IdStop), nullptr, nullptr);
+        496, 19, 74, 32, window, reinterpret_cast<HMENU>(IdStop), nullptr, nullptr);
     setControlFont(g_startButton, g_regularFont);
     setControlFont(g_stopButton, g_regularFont);
     EnableWindow(g_stopButton, FALSE);
 
     g_tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS,
-        14, 78, 490, 287, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
+        14, 78, 572, 287, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
     setControlFont(g_tabs, g_regularFont);
     TCITEMW tab{};
     tab.mask = TCIF_TEXT;
@@ -562,20 +566,20 @@ void createControls(HWND window) {
     };
     for (int index = 0; index < 7; ++index) {
         g_dayChecks[index] = createPageControl(1, L"BUTTON", dayNames[index],
-            WS_TABSTOP | BS_AUTOCHECKBOX, 22 + index * 64, 166, 56, 22, IdDayMonday + index);
+            WS_TABSTOP | BS_AUTOCHECKBOX, 30 + index * 72, 166, 64, 22, IdDayMonday + index);
     }
     createPageControl(1, L"STATIC", L"Start (HH:MM)", SS_LEFT, 30, 205, 95, 22, 0);
     g_startTimeEdit = createPageControl(1, L"EDIT", L"09:00",
         WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 130, 201, 72, 25, IdStartTime);
-    createPageControl(1, L"STATIC", L"End (HH:MM)", SS_LEFT, 236, 205, 88, 22, 0);
+    createPageControl(1, L"STATIC", L"End (HH:MM)", SS_LEFT, 286, 205, 88, 22, 0);
     g_endTimeEdit = createPageControl(1, L"EDIT", L"18:00",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 328, 201, 72, 25, IdEndTime);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 380, 201, 72, 25, IdEndTime);
     g_startupCheck = createPageControl(1, L"BUTTON", L"Start with Windows (minimized)",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 237, 245, 24, IdStartup);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 237, 280, 24, IdStartup);
     g_launchTargetCheck = createPageControl(1, L"BUTTON", L"Open target on session start",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 269, 210, 24, IdLaunchTarget);
     g_targetPathEdit = createPageControl(1, L"EDIT", L"",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 242, 267, 235, 25, IdTargetPath);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 250, 267, 320, 25, IdTargetPath);
     createPageControl(1, L"STATIC", L"Repeat", SS_LEFT, 30, 303, 54, 22, 0);
     g_targetIntervalCombo = createPageControl(1, WC_COMBOBOXW, L"",
         WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 88, 299, 116, 100, IdTargetInterval);
@@ -592,7 +596,7 @@ void createControls(HWND window) {
     createPageControl(1, L"STATIC", L"Global shortcut", SS_LEFT,
         30, 338, 90, 22, 0);
     g_hotkeyCombo = createPageControl(1, WC_COMBOBOXW, L"",
-        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 130, 334, 170, 100, IdHotkey);
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 130, 334, 190, 100, IdHotkey);
     for (const auto& hotkey : kHotkeyDefinitions) {
         SendMessageW(g_hotkeyCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(hotkey.label));
     }
@@ -615,6 +619,7 @@ void createControls(HWND window) {
         WS_CHILD | WS_VISIBLE,
         0, 0, 0, 0, window, reinterpret_cast<HMENU>(IdStatus),
         GetModuleHandleW(nullptr), nullptr);
+    setControlFont(g_statusLabel, g_statusFont);
     populateControlsFromSettings();
     showPage(0);
 }
@@ -1242,7 +1247,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             RECT statusRect{};
             GetClientRect(g_statusLabel, &statusRect);
             const int width = std::max(200L, statusRect.right);
-            int parts[4] = {width * 40 / 100, width * 69 / 100, width * 86 / 100, -1};
+            int parts[4] = {width * 39 / 100, width * 68 / 100, width * 84 / 100, -1};
             SendMessageW(g_statusLabel, SB_SETPARTS, 4, reinterpret_cast<LPARAM>(parts));
             updateStatusParts();
         }
@@ -1400,6 +1405,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         KillTimer(window, kDiagnosticsTimerId);
         if (g_regularFont) DeleteObject(g_regularFont);
         if (g_titleFont) DeleteObject(g_titleFont);
+        if (g_statusFont) DeleteObject(g_statusFont);
         if (g_backgroundBrush) DeleteObject(g_backgroundBrush);
         PostQuitMessage(0);
         return 0;
@@ -1444,7 +1450,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     g_window = CreateWindowExW(
         WS_EX_APPWINDOW, kWindowClass, kWindowTitle,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 520, 440,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 440,
         nullptr, nullptr, instance, nullptr);
     if (g_window == nullptr) return static_cast<int>(GetLastError());
 
