@@ -612,7 +612,7 @@ void createControls(HWND window) {
         SS_LEFT, 30, 310, 450, 36, 0);
 
     g_statusLabel = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
-        WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+        WS_CHILD | WS_VISIBLE,
         0, 0, 0, 0, window, reinterpret_cast<HMENU>(IdStatus),
         GetModuleHandleW(nullptr), nullptr);
     populateControlsFromSettings();
