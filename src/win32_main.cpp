@@ -167,13 +167,7 @@ void updateStatusParts();
 void updateDiagnostics();
 void setStatus(const std::wstring& value) {
     if (g_statusLabel != nullptr) {
-        constexpr std::size_t kVisibleStatusChars = 32;
-        std::wstring visible = value;
-        if (visible.size() > kVisibleStatusChars) {
-            visible.resize(kVisibleStatusChars - 3);
-            visible += L"...";
-        }
-        SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(visible.c_str()));
+        SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
         SendMessageW(g_statusLabel, SB_SETTIPTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
     }
     if (g_window != nullptr) {
