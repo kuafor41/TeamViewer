@@ -16,7 +16,7 @@ Acrobat is an independent Windows desktop utility for pointer control and sessio
 - Weekly schedule with day selection and local start/end times.
 - Session countdown, optional app exit, and optional Windows startup.
 - Optional launch of a user-selected file, folder, or URL on session start or at a selected interval.
-- x64 and x86 portable ZIPs and per-user MSI installers produced by GitHub Actions; MSVC runtime is statically linked for a self-contained EXE.
+- x64 and x86 portable ZIPs and per-user MSI installers produced by GitHub Actions (WiX 5.0.2); MSVC runtime is statically linked for a self-contained EXE.
 
 ## Formula fidelity
 

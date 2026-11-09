@@ -38,6 +38,6 @@ Build artifacts are currently unsigned. Authenticode signing will be configured 
 
 ## MSI installer
 
-The Windows Actions matrix also produces a per-user MSI using WiX Toolset 7.0.1. It installs Acrobat under the current user's LocalAppData\Programs\Acrobat directory and creates a Start Menu shortcut. It does not require elevation. Separate x64 and x86 MSIs are uploaded as workflow artifacts.
+The Windows Actions matrix also produces a per-user MSI using WiX Toolset 5.0.2. It installs Acrobat under the current user's LocalAppData\Programs\Acrobat directory and creates a Start Menu shortcut. It does not require elevation. Separate x64 and x86 MSIs are uploaded as workflow artifacts.
 
 The portable packages remain independent and store their settings beside the executable through portable.flag.

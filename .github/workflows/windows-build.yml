@@ -58,7 +58,7 @@ jobs:
           if-no-files-found: error
 
       - name: Install WiX Toolset
-        run: dotnet tool install --tool-path ./.tools wix --version 7.0.1
+        run: dotnet tool install --tool-path ./.tools wix --version 5.0.2
 
       - name: Build per-user MSI
         shell: pwsh
