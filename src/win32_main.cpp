@@ -669,12 +669,14 @@ void runTargetIfDue(ULONGLONG now) {
 void stopSession(bool fromSchedule = false) {
     g_running = false;
     g_startedBySchedule = false;
+    g_sessionStartedAt = 0;
     g_nextActionAt = 0;
     g_countdownDeadline = 0;
     g_nextTargetLaunchAt = 0;
     abortPath();
     releasePowerRequest();
     setStatus(fromSchedule ? L"Schedule window ended; session stopped" : L"Stopped");
+    updateStatusParts();
     setEnabledState();
 }
 
@@ -693,7 +695,9 @@ void startSession(bool fromSchedule = false) {
 
     g_running = true;
     g_startedBySchedule = fromSchedule;
-    g_lastPhysicalInput = GetTickCount64();
+    g_sessionStartedAt = GetTickCount64();
+    ++g_sessionCount;
+    g_lastPhysicalInput = g_sessionStartedAt;
     g_nextActionAt = 0;
     g_countdownDeadline = g_settings.countdownMinutes > 0
         ? g_lastPhysicalInput + static_cast<ULONGLONG>(g_settings.countdownMinutes) * 60ULL * 1000ULL
@@ -708,6 +712,8 @@ void startSession(bool fromSchedule = false) {
         setStatus(fromSchedule ? L"Started by weekly schedule" : L"Session active");
     }
     setEnabledState();
+    updateStatusParts();
+    updateDiagnostics();
     saveSettings();
     if (g_settings.startupEnabled && !updateStartupRegistration(true)) {
         setStatus(L"Session active; Windows startup registration failed");
@@ -827,7 +833,7 @@ void finishPath() {
 }
 
 void updateRunningState() {
-    if (!g_running) return;
+    if (!g_running) { updateStatusParts(); return; }
     const ULONGLONG now = GetTickCount64();
 
     if (g_countdownDeadline != 0 && now >= g_countdownDeadline) {
@@ -844,7 +850,7 @@ void updateRunningState() {
         abortPath();
         g_nextActionAt = 0;
         releasePowerRequest();
-        setStatus(L"Paused; battery power detected");
+        setStatus(L"Paused; battery disconnected or at/below 20%");
         return;
     }
 
@@ -855,6 +861,8 @@ void updateRunningState() {
     }
 
     runTargetIfDue(now);
+    updateStatusParts();
+    updateDiagnostics();
 
     if (!g_settings.pointerEnabled) {
         if (now - g_lastStatusUpdate >= 1000) {
@@ -918,6 +926,77 @@ void updateRunningState() {
         swprintf_s(status, L"Session active  •  next movement in %lu sec",
             static_cast<unsigned long>((remaining + 999) / 1000));
         setStatus(status);
+    }
+}
+
+ULONGLONG fileTimeToUInt64(const FILETIME& value) {
+    return (static_cast<ULONGLONG>(value.dwHighDateTime) << 32) |
+        static_cast<ULONGLONG>(value.dwLowDateTime);
+}
+
+void updateDiagnostics() {
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_lastDiagnosticsUpdate < kDiagnosticsRefreshMs) return;
+    g_lastDiagnosticsUpdate = now;
+
+    PROCESS_MEMORY_COUNTERS_EX memory{};
+    memory.cb = sizeof(memory);
+    if (GetProcessMemoryInfo(GetCurrentProcess(),
+        reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory))) {
+        g_workingSetBytes = memory.WorkingSetSize;
+    }
+
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) {
+        const ULONGLONG kernelNow = fileTimeToUInt64(kernel);
+        const ULONGLONG userNow = fileTimeToUInt64(user);
+        if (g_lastCpuSampleTick != 0 && now > g_lastCpuSampleTick) {
+            const ULONGLONG cpuDelta = (kernelNow - g_lastKernelTime) +
+                (userNow - g_lastUserTime);
+            const ULONGLONG wall100ns = (now - g_lastCpuSampleTick) * 10000ULL;
+            SYSTEM_INFO systemInfo{};
+            GetSystemInfo(&systemInfo);
+            const DWORD cores = std::max<DWORD>(1, systemInfo.dwNumberOfProcessors);
+            g_cpuUsagePercent = wall100ns == 0 ? 0.0 :
+                (100.0 * static_cast<double>(cpuDelta) /
+                 static_cast<double>(wall100ns) / static_cast<double>(cores));
+            g_cpuUsagePercent = std::clamp(g_cpuUsagePercent, 0.0, 100.0);
+        }
+        g_lastKernelTime = kernelNow;
+        g_lastUserTime = userNow;
+        g_lastCpuSampleTick = now;
+    }
+
+    wchar_t buffer[192]{};
+    if (g_diagCpuLabel != nullptr) {
+        swprintf_s(buffer, L"Process CPU: %.2f%% (sampled over ~1 second)", g_cpuUsagePercent);
+        SetWindowTextW(g_diagCpuLabel, buffer);
+    }
+    if (g_diagMemoryLabel != nullptr) {
+        swprintf_s(buffer, L"Working set: %.1f MB",
+            static_cast<double>(g_workingSetBytes) / (1024.0 * 1024.0));
+        SetWindowTextW(g_diagMemoryLabel, buffer);
+    }
+
+    SYSTEM_POWER_STATUS power{};
+    if (g_diagBatteryLabel != nullptr) {
+        if (GetSystemPowerStatus(&power)) {
+            if (power.ACLineStatus == 1) wcscpy_s(buffer, L"Power source: AC");
+            else if (power.ACLineStatus == 0 && power.BatteryLifePercent != 255)
+                swprintf_s(buffer, L"Power source: Battery (%u%%)",
+                    static_cast<unsigned int>(power.BatteryLifePercent));
+            else wcscpy_s(buffer, L"Power source: Battery level unavailable");
+        } else wcscpy_s(buffer, L"Power source: unavailable");
+        SetWindowTextW(g_diagBatteryLabel, buffer);
+    }
+    if (g_diagInputLabel != nullptr) {
+        swprintf_s(buffer, L"Physical keyboard/mouse events observed: %llu",
+            g_physicalInputCount);
+        SetWindowTextW(g_diagInputLabel, buffer);
+    }
+    if (g_diagSessionLabel != nullptr) {
+        swprintf_s(buffer, L"Sessions started this run: %llu", g_sessionCount);
+        SetWindowTextW(g_diagSessionLabel, buffer);
     }
 }
 
@@ -1049,14 +1128,25 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_lastPhysicalInput = GetTickCount64();
         SetTimer(window, kEngineTimerId, kEngineTimerMs, nullptr);
         SetTimer(window, kScheduleTimerId, 1000, nullptr);
-        if (!RegisterHotKey(window, kHotkeyId, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'J')) {
-            setStatus(L"Ctrl+Shift+J is unavailable; use the Start/Stop buttons");
-        }
+        SetTimer(window, kDiagnosticsTimerId, kDiagnosticsRefreshMs, nullptr);
+        if (!registerGlobalHotkey()) setStatus(L"Selected global shortcut is unavailable");
         g_inputMonitoringReady = installHooks();
         if (!g_inputMonitoringReady) {
             setStatus(L"Input monitoring unavailable; pointer mode cannot start");
         }
         updateSchedule();
+        return 0;
+
+    case WM_SIZE:
+        if (g_statusLabel != nullptr) {
+            SendMessageW(g_statusLabel, WM_SIZE, 0, 0);
+            RECT statusRect{};
+            GetClientRect(g_statusLabel, &statusRect);
+            const int width = std::max(200L, statusRect.right);
+            int parts[4] = {width * 40 / 100, width * 69 / 100, width * 86 / 100, -1};
+            SendMessageW(g_statusLabel, SB_SETPARTS, 4, reinterpret_cast<LPARAM>(parts));
+            updateStatusParts();
+        }
         return 0;
 
     case WM_COMMAND:
@@ -1085,6 +1175,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE ||
             HIWORD(wParam) == EN_KILLFOCUS) {
             saveFromUi();
+            if (LOWORD(wParam) == IdHotkey) {
+                if (!registerGlobalHotkey()) setStatus(L"Selected global shortcut is unavailable");
+                else setStatus(L"Global shortcut updated");
+            }
             if (LOWORD(wParam) == IdStartup) {
                 if (!updateStartupRegistration(g_settings.startupEnabled)) {
                     setStatus(L"Could not update Windows startup registration");
@@ -1114,9 +1208,11 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_lastPhysicalInput = GetTickCount64();
         g_nextActionAt = 0;
         abortPath();
+        ++g_physicalInputCount;
         if (g_running && g_settings.pointerEnabled) {
             setStatus(L"Paused; waiting for physical input to stop");
         }
+        updateDiagnostics();
         return 0;
 
     case WM_TIMER:
@@ -1126,6 +1222,12 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         if (wParam == kScheduleTimerId) {
             updateSchedule();
+            updateStatusParts();
+            return 0;
+        }
+        if (wParam == kDiagnosticsTimerId) {
+            updateDiagnostics();
+            updateStatusParts();
             return 0;
         }
         break;
@@ -1177,9 +1279,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         stopSession();
         removeHooks();
         removeTrayIcon();
-        UnregisterHotKey(window, kHotkeyId);
+        if (g_hotkeyRegistered) UnregisterHotKey(window, kHotkeyId);
         KillTimer(window, kEngineTimerId);
         KillTimer(window, kScheduleTimerId);
+        KillTimer(window, kDiagnosticsTimerId);
         if (g_regularFont) DeleteObject(g_regularFont);
         if (g_titleFont) DeleteObject(g_titleFont);
         if (g_backgroundBrush) DeleteObject(g_backgroundBrush);
@@ -1200,7 +1303,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
 
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
-    controls.dwICC = ICC_TAB_CLASSES;
+    controls.dwICC = ICC_TAB_CLASSES | ICC_BAR_CLASSES;
     InitCommonControlsEx(&controls);
 
     WNDCLASSEXW windowClass{};
