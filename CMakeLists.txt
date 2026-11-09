@@ -18,7 +18,7 @@ endif()
 
 if(WIN32)
     add_executable(Acrobat WIN32 src/win32_main.cpp resources/acrobat.rc)
-    target_link_libraries(Acrobat PRIVATE AcrobatCore user32 shell32 advapi32 comctl32)
+    target_link_libraries(Acrobat PRIVATE AcrobatCore user32 shell32 advapi32 comctl32 ole32 propsys psapi uuid)
     target_compile_definitions(Acrobat PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
     if(MSVC)
         target_compile_options(Acrobat PRIVATE /W4 /permissive- /EHsc /utf-8)
