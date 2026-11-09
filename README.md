@@ -16,11 +16,15 @@ Acrobat is an independent Windows desktop utility for pointer control and sessio
 - Weekly schedule with day selection and local start/end times.
 - Session countdown, optional app exit, and optional Windows startup.
 - Optional launch of a user-selected file, folder, or URL on session start or at a selected interval.
-- x64 and x86 portable ZIPs produced by GitHub Actions.
+- x64 and x86 portable ZIPs and per-user MSI installers produced by GitHub Actions.
 
 ## Formula fidelity
 
 The source document explicitly supplies the cubic Bezier equation and the clamped Poisson(lambda=42) timing equation. It describes the S-curve, Perlin plus Gaussian tremor N(0,sigma^2), and overshoot qualitatively, but does not define a unique S-curve equation, Perlin frequency/amplitude, Gaussian sigma, or overshoot distance. The implementation uses smoothstep 3t^2-2t^3 as the documented S-curve choice and exposes the unspecified trajectory parameters in the core options.
+
+## Installer
+
+GitHub Actions also creates separate per-user x64 and x86 MSI installers. They install under the current user's LocalAppData folder and create a Start Menu shortcut without requiring elevation.
 
 ## Portable settings
 
