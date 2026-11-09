@@ -1,0 +1,13 @@
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+/.vs/
+/out/
+/dist/
+*.user
+*.pdb
+*.ilk
+*.obj
+*.exe

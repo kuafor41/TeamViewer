@@ -1,0 +1,51 @@
+name: Windows x64 build
+
+on:
+  push:
+    branches:
+      - main
+      - feature/deskawake-windows-foundation
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deskawake-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure x64
+        run: cmake -S . -B build -A x64 -DDESKAWAKE_BUILD_TESTS=ON
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Run core tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $package = "dist/DeskAwake-portable"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "build/Release/DeskAwake.exe" $package
+          Copy-Item "README.md" $package
+          Copy-Item "LICENSE" $package
+          Compress-Archive -Path "$package/*" -DestinationPath "dist/DeskAwake-win-x64-portable.zip" -Force
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeskAwake-win-x64-portable
+          path: dist/DeskAwake-win-x64-portable.zip
+          if-no-files-found: error
