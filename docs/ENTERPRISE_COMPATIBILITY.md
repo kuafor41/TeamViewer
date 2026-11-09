@@ -6,7 +6,7 @@ Acrobat should behave like a conventional, supportable Windows desktop utility i
 
 The objective is **compatibility and false-positive reduction**, not hiding the process or bypassing endpoint controls. No application can guarantee that every third-party endpoint product will classify it identically; the deliverable is a transparent, signed, documented application that administrators can evaluate and deploy through their normal policy.
 
-## Current 0.3.1 baseline (measured implementation, not a claim of optimized performance)
+## Current 0.3.2 baseline (measured implementation, not a claim of optimized performance)
 
 - The app is a single per-user Win32 GUI process named `Acrobat.exe`; it is not installed as a Windows service.
 - The engine timer is currently configured at 20 ms and starts when the main window is created. The callback continues to run while the session is stopped.
@@ -103,7 +103,7 @@ Collect CPU average and p95, working set/private bytes, thread/handle count, wak
 
 ## Delivery phases
 
-1. **0.3.1 UI and documentation:** wider layout and this enterprise-compatibility plan. No engine behavior change is implied.
+1. **0.3.1/0.3.2 UI and controls:** wider layout, three travel-distance choices and About tab. The existing engine cadence and input-monitoring lifecycle are not changed by these UI additions.
 2. **0.4.x resource profile:** instrument idle CPU/wakeups; remove permanent 20 ms polling; scope input monitoring to active use; make diagnostics demand-driven; add regression tests for real and app-generated input.
 3. **0.5.x enterprise packaging:** stable version resources and MSI inventory fields, signed x64/x86 EXE/MSI, SHA-256 manifest, SBOM, administrator deployment/uninstall guide, and release provenance.
 4. **Optional service evaluation:** only if a concrete machine-wide, non-interactive feature is approved. Keep the user-session agent separate and use least privilege plus authenticated IPC.

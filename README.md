@@ -1,11 +1,11 @@
 # Acrobat
 
-Acrobat 0.3.1 is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
+Acrobat 0.3.2 is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
 
 ## Current implementation
 
 - Native Win32 desktop application for Windows 10/11, built for x64 and x86.
-- Wider 600 × 440 three-tab UI with a docked four-part status bar, reduced status-bar font, system tray, and configurable global hotkey (Ctrl+Shift+J, Ctrl+Alt+J, Ctrl+Shift+F10, Ctrl+Alt+F12).
+- Wider 600 × 440 four-tab UI (Session, Schedule & Automation, Diagnostics, About) with a docked four-part status bar, reduced status-bar font, system tray, and configurable global hotkey (Ctrl+Shift+J, Ctrl+Alt+J, Ctrl+Shift+F10, Ctrl+Alt+F12).
 - Optional SetThreadExecutionState display/system power request.
 - Physical keyboard/mouse activity monitoring with automatic pause and timer reset (the current hook/timer implementation is documented for replacement in the low-overhead roadmap).
 - Battery-aware pause when unplugged or at/below 20% charge.
@@ -15,7 +15,8 @@ Acrobat 0.3.1 is an independent Windows desktop utility for pointer control and 
 - Poisson interval formula from the product plan: T_interval = min(89, max(10, Poisson(lambda = 42))).
 - 70% / 30% action routing.
 - Motion core: cubic Bezier, smoothstep S-curve, seeded 2D Perlin-style noise, Gaussian tremor and overshoot.
-- User-selectable travel distance and angle (-1 means random angle).
+- Three travel-distance modes: random 10–1500 px on every trajectory, random 10 px to the current virtual-desktop diagonal, or manual 1–1,000,000 px. Angle -1 continues to choose a new random X/Y direction for every trajectory; out-of-bounds targets are clamped to the usable virtual desktop.
+- The About tab displays “planned, designed and developed by Altug T.” in a Segoe Print handwriting-style font.
 - Weekly schedule with day selection and local start/end times.
 - Session countdown, optional app exit, and optional Windows startup.
 - Optional launch of a user-selected file, folder, or URL on session start or at a selected interval.

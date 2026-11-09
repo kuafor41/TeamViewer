@@ -69,6 +69,7 @@ enum ControlId : int {
     IdTargetPath = 2034,
     IdTargetInterval = 2035,
     IdHotkey = 2036,
+    IdDistanceMode = 2037,
     IdStatus = 2040,
     IdTrayShow = 2050,
     IdTrayToggle = 2051,
@@ -80,6 +81,7 @@ struct AppSettings {
     bool keepAwake{true};
     bool pauseOnBattery{true};
     int distancePixels{120};
+    int distanceMode{2}; // 0=random 10..1500, 1=screen diagonal, 2=manual
     int angleDegrees{-1};
     int countdownMinutes{};
     bool autoExit{};
@@ -102,6 +104,8 @@ HWND g_pointerCheck{};
 HWND g_powerCheck{};
 HWND g_batteryCheck{};
 HWND g_distanceEdit{};
+HWND g_distanceModeCombo{};
+HWND g_manualDistanceLabel{};
 HWND g_angleEdit{};
 HWND g_countdownEdit{};
 HWND g_autoExitCheck{};
@@ -124,9 +128,11 @@ HWND g_diagSessionLabel{};
 std::vector<HWND> g_generalControls;
 std::vector<HWND> g_scheduleControls;
 std::vector<HWND> g_diagnosticsControls;
+std::vector<HWND> g_aboutControls;
 HFONT g_regularFont{};
 HFONT g_titleFont{};
 HFONT g_statusFont{};
+HFONT g_aboutFont{};
 HBRUSH g_backgroundBrush{};
 
 HHOOK g_mouseHook{};
@@ -284,7 +290,8 @@ void loadSettings() {
     g_settings.pointerEnabled = readInt(L"General", L"PointerEnabled", 1) != 0;
     g_settings.keepAwake = readInt(L"General", L"KeepAwake", 1) != 0;
     g_settings.pauseOnBattery = readInt(L"General", L"PauseOnBattery", 1) != 0;
-    g_settings.distancePixels = std::clamp(readInt(L"Motion", L"DistancePixels", 120), 1, 1000);
+    g_settings.distancePixels = std::clamp(readInt(L"Motion", L"DistancePixels", 120), 1, 1000000);
+    g_settings.distanceMode = std::clamp(readInt(L"Motion", L"DistanceMode", 2), 0, 2);
     g_settings.angleDegrees = std::clamp(readInt(L"Motion", L"AngleDegrees", -1), -1, 359);
     g_settings.countdownMinutes = std::clamp(readInt(L"Duration", L"CountdownMinutes", 0), 0, 1440);
     g_settings.autoExit = readInt(L"Duration", L"AutoExit", 0) != 0;
@@ -306,6 +313,7 @@ void saveSettings() {
     writeInt(L"General", L"PauseOnBattery", g_settings.pauseOnBattery ? 1 : 0);
     writeInt(L"General", L"Startup", g_settings.startupEnabled ? 1 : 0);
     writeInt(L"Motion", L"DistancePixels", g_settings.distancePixels);
+    writeInt(L"Motion", L"DistanceMode", g_settings.distanceMode);
     writeInt(L"Motion", L"AngleDegrees", g_settings.angleDegrees);
     writeInt(L"Duration", L"CountdownMinutes", g_settings.countdownMinutes);
     writeInt(L"Duration", L"AutoExit", g_settings.autoExit ? 1 : 0);
@@ -346,14 +354,32 @@ bool updateStartupRegistration(bool enabled) {
     return result == ERROR_SUCCESS;
 }
 
+void updateDistanceModeControls() {
+    if (g_distanceModeCombo == nullptr) return;
+    const LRESULT selected = SendMessageW(g_distanceModeCombo, CB_GETCURSEL, 0, 0);
+    const int mode = selected == CB_ERR ? g_settings.distanceMode : static_cast<int>(selected);
+    const bool manual = mode == 2;
+    if (g_manualDistanceLabel != nullptr) {
+        ShowWindow(g_manualDistanceLabel, manual ? SW_SHOW : SW_HIDE);
+        EnableWindow(g_manualDistanceLabel, manual && !g_running);
+    }
+    if (g_distanceEdit != nullptr) {
+        ShowWindow(g_distanceEdit, manual ? SW_SHOW : SW_HIDE);
+        EnableWindow(g_distanceEdit, manual && !g_running);
+    }
+}
+
 void syncSettingsFromControls() {
     g_settings.pointerEnabled = SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_settings.keepAwake = SendMessageW(g_powerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_settings.pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
+    const LRESULT distanceMode = SendMessageW(g_distanceModeCombo, CB_GETCURSEL, 0, 0);
+    g_settings.distanceMode = distanceMode == CB_ERR ? 2 :
+        std::clamp(static_cast<int>(distanceMode), 0, 2);
     wchar_t text[64]{};
     GetWindowTextW(g_distanceEdit, text, static_cast<int>(std::size(text)));
-    try { g_settings.distancePixels = std::clamp(std::stoi(text), 1, 1000); }
+    try { g_settings.distancePixels = std::clamp(std::stoi(text), 1, 1000000); }
     catch (...) { g_settings.distancePixels = 120; }
 
     GetWindowTextW(g_angleEdit, text, static_cast<int>(std::size(text)));
@@ -399,6 +425,8 @@ void populateControlsFromSettings() {
     wchar_t number[32]{};
     swprintf_s(number, L"%d", g_settings.distancePixels);
     SetWindowTextW(g_distanceEdit, number);
+    SendMessageW(g_distanceModeCombo, CB_SETCURSEL, g_settings.distanceMode, 0);
+    updateDistanceModeControls();
     swprintf_s(number, L"%d", g_settings.angleDegrees);
     SetWindowTextW(g_angleEdit, number);
 
@@ -463,6 +491,7 @@ void showPage(int page) {
     for (HWND control : g_generalControls) ShowWindow(control, page == 0 ? SW_SHOW : SW_HIDE);
     for (HWND control : g_scheduleControls) ShowWindow(control, page == 1 ? SW_SHOW : SW_HIDE);
     for (HWND control : g_diagnosticsControls) ShowWindow(control, page == 2 ? SW_SHOW : SW_HIDE);
+    for (HWND control : g_aboutControls) ShowWindow(control, page == 3 ? SW_SHOW : SW_HIDE);
 }
 
 void setControlFont(HWND control, HFONT font) {
@@ -479,7 +508,8 @@ HWND createPageControl(int page, const wchar_t* cls, const wchar_t* text, DWORD 
     setControlFont(control, g_regularFont);
     if (page == 0) g_generalControls.push_back(control);
     else if (page == 1) g_scheduleControls.push_back(control);
-    else g_diagnosticsControls.push_back(control);
+    else if (page == 2) g_diagnosticsControls.push_back(control);
+    else if (page == 3) g_aboutControls.push_back(control);
     return control;
 }
 
@@ -490,6 +520,7 @@ void setEnabledState() {
         const int id = GetDlgCtrlID(control);
         if (id != IdStart && id != IdStop) EnableWindow(control, !g_running);
     }
+    updateDistanceModeControls();
 }
 
 void createControls(HWND window) {
@@ -502,6 +533,9 @@ void createControls(HWND window) {
     g_statusFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    g_aboutFont = CreateFontW(-24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe Print");
 
     HWND title = CreateWindowW(L"STATIC", L"Acrobat", WS_CHILD | WS_VISIBLE,
         22, 16, 220, 30, window, nullptr, nullptr, nullptr);
@@ -532,6 +566,8 @@ void createControls(HWND window) {
     TabCtrl_InsertItem(g_tabs, 1, &tab);
     tab.pszText = const_cast<LPWSTR>(L"Diagnostics");
     TabCtrl_InsertItem(g_tabs, 2, &tab);
+    tab.pszText = const_cast<LPWSTR>(L"About");
+    TabCtrl_InsertItem(g_tabs, 3, &tab);
 
     g_pointerCheck = createPageControl(0, L"BUTTON", L"Enable pointer movement",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 116, 195, 24, IdPointer);
@@ -540,24 +576,35 @@ void createControls(HWND window) {
     g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause on battery or below 20%",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 147, 240, 24, IdBattery);
 
-    createPageControl(0, L"STATIC", L"Travel distance (px)", SS_LEFT,
-        30, 190, 118, 22, 0);
+    createPageControl(0, L"STATIC", L"Travel distance", SS_LEFT,
+        30, 190, 112, 22, 0);
+    g_distanceModeCombo = createPageControl(0, WC_COMBOBOXW, L"",
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 148, 187, 207, 120, IdDistanceMode);
+    SendMessageW(g_distanceModeCombo, CB_ADDSTRING, 0,
+        reinterpret_cast<LPARAM>(L"Random 10-1500 px"));
+    SendMessageW(g_distanceModeCombo, CB_ADDSTRING, 0,
+        reinterpret_cast<LPARAM>(L"Random screen range"));
+    SendMessageW(g_distanceModeCombo, CB_ADDSTRING, 0,
+        reinterpret_cast<LPARAM>(L"Manual distance"));
+    g_manualDistanceLabel = createPageControl(0, L"STATIC", L"Manual px", SS_LEFT,
+        365, 190, 56, 22, 0);
     g_distanceEdit = createPageControl(0, L"EDIT", L"120",
-        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 150, 187, 62, 25, IdDistance);
+        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 424, 187, 62, 25, IdDistance);
+
     createPageControl(0, L"STATIC", L"Angle (-1 = random)", SS_LEFT,
-        238, 190, 130, 22, 0);
+        30, 226, 145, 22, 0);
     g_angleEdit = createPageControl(0, L"EDIT", L"-1",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 370, 187, 55, 25, IdAngle);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 181, 223, 62, 25, IdAngle);
 
     createPageControl(0, L"STATIC", L"Session limit (min; 0 = unlimited)", SS_LEFT,
-        30, 243, 205, 22, 0);
+        30, 270, 205, 22, 0);
     g_countdownEdit = createPageControl(0, L"EDIT", L"0",
-        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 238, 239, 62, 25, IdCountdown);
+        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 238, 266, 62, 25, IdCountdown);
     g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit when finished",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 315, 241, 160, 24, IdAutoExit);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 315, 268, 160, 24, IdAutoExit);
     createPageControl(0, L"STATIC",
         L"Physical input pauses pointer movement; Ctrl+Shift+J toggles the session.",
-        SS_LEFT, 30, 286, 440, 34, 0);
+        SS_LEFT, 30, 310, 440, 34, 0);
 
     g_scheduleCheck = createPageControl(1, L"BUTTON", L"Enable weekly schedule",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 112, 220, 24, IdSchedule);
@@ -615,6 +662,11 @@ void createControls(HWND window) {
     createPageControl(2, L"STATIC",
         L"Local diagnostics only. No EDR/UEBA detection or evasion logic is used.",
         SS_LEFT, 30, 310, 450, 36, 0);
+
+    HWND aboutCard = createPageControl(3, L"STATIC",
+        L"planned, designed and developed by Altug T.",
+        SS_CENTER | SS_CENTERIMAGE | WS_BORDER, 70, 180, 444, 76, 0);
+    setControlFont(aboutCard, g_aboutFont != nullptr ? g_aboutFont : g_regularFont);
 
     g_statusLabel = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
         WS_CHILD | WS_VISIBLE | SBARS_TOOLTIPS,
@@ -802,25 +854,42 @@ bool beginHumanPath() {
     const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int width = std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
     const int height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    const double distance = static_cast<double>(g_settings.distancePixels);
-    double angleDegrees = static_cast<double>(g_settings.angleDegrees);
-    if (g_settings.angleDegrees < 0) {
-        std::uniform_real_distribution<double> randomAngle(0.0, 360.0);
-        angleDegrees = randomAngle(g_random);
+    double distance = static_cast<double>(g_settings.distancePixels);
+    if (g_settings.distanceMode == 0) {
+        std::uniform_int_distribution<int> randomDistance(10, 1500);
+        distance = static_cast<double>(randomDistance(g_random));
+    } else if (g_settings.distanceMode == 1) {
+        // Re-measure the current virtual desktop for every route (including multi-monitor layouts).
+        const double screenDiagonal = std::ceil(std::hypot(static_cast<double>(width),
+                                                           static_cast<double>(height)));
+        const int maximumPixels = static_cast<int>(std::clamp(screenDiagonal, 10.0, 1000000.0));
+        std::uniform_int_distribution<int> randomDistance(10, maximumPixels);
+        distance = static_cast<double>(randomDistance(g_random));
     }
-    constexpr double kPi = 3.14159265358979323846;
-    const double angle = angleDegrees * kPi / 180.0;
 
+    constexpr double kPi = 3.14159265358979323846;
     const int minX = left + std::min(12, width / 4);
     const int maxX = left + width - 1 - std::min(12, width / 4);
     const int minY = top + std::min(12, height / 4);
     const int maxY = top + height - 1 - std::min(12, height / 4);
     const deskawake::Point start{static_cast<double>(current.x), static_cast<double>(current.y)};
-    const deskawake::Point target{
-        static_cast<double>(std::clamp(static_cast<int>(std::lround(current.x + std::cos(angle) * distance)), minX, maxX)),
-        static_cast<double>(std::clamp(static_cast<int>(std::lround(current.y + std::sin(angle) * distance)), minY, maxY))
-    };
-    if (std::abs(target.x - start.x) < 1.0 && std::abs(target.y - start.y) < 1.0) return false;
+    deskawake::Point target{};
+    bool targetValid = false;
+    for (int attempt = 0; attempt < 8 && !targetValid; ++attempt) {
+        double angleDegrees = static_cast<double>(g_settings.angleDegrees);
+        if (g_settings.angleDegrees < 0) {
+            std::uniform_real_distribution<double> randomAngle(0.0, 360.0);
+            angleDegrees = randomAngle(g_random);
+        }
+        const double angle = angleDegrees * kPi / 180.0;
+        target = {
+            static_cast<double>(std::clamp(static_cast<int>(std::lround(current.x + std::cos(angle) * distance)), minX, maxX)),
+            static_cast<double>(std::clamp(static_cast<int>(std::lround(current.y + std::sin(angle) * distance)), minY, maxY))
+        };
+        targetValid = std::abs(target.x - start.x) >= 1.0 ||
+                      std::abs(target.y - start.y) >= 1.0;
+    }
+    if (!targetValid) return false;
 
     deskawake::TrajectoryOptions options{};
     options.sample_count = 28;
@@ -1071,7 +1140,7 @@ void showTrayMenu() {
 }
 
 void showOrHidePageControls(int page) {
-    showPage(std::clamp(page, 0, 2));
+    showPage(std::clamp(page, 0, 3));
 }
 
 LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
@@ -1296,6 +1365,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE ||
             HIWORD(wParam) == EN_KILLFOCUS) {
             saveFromUi();
+            if (LOWORD(wParam) == IdDistanceMode) {
+                updateDistanceModeControls();
+            }
             if (LOWORD(wParam) == IdHotkey) {
                 if (!registerGlobalHotkey()) setStatus(L"Selected global shortcut is unavailable");
                 else setStatus(L"Global shortcut updated");
@@ -1407,6 +1479,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (g_regularFont) DeleteObject(g_regularFont);
         if (g_titleFont) DeleteObject(g_titleFont);
         if (g_statusFont) DeleteObject(g_statusFont);
+        if (g_aboutFont) DeleteObject(g_aboutFont);
         if (g_backgroundBrush) DeleteObject(g_backgroundBrush);
         PostQuitMessage(0);
         return 0;
