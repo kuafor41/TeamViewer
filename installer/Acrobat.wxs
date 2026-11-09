@@ -2,8 +2,8 @@
   <Package
     Name="Acrobat"
     Manufacturer="Acrobat Project"
-    Version="0.2.0"
-    UpgradeCode="{B4F29BC8-5A7B-4C1C-9B03-5CDB44E6D2A1}"
+    Version="0.3.0"
+    UpgradeCode="$(var.UpgradeCode)"
     Scope="perUser">
 
     <SummaryInformation Description="Acrobat desktop utility" Manufacturer="Acrobat Project" />

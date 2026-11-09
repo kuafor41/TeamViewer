@@ -1,6 +1,6 @@
 # Acrobat
 
-Acrobat is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
+Acrobat 0.3.0 is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
 
 ## Current implementation
 
