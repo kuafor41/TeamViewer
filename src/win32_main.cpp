@@ -869,13 +869,14 @@ void showOrHidePageControls(bool showGeneral) {
 }
 
 LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION && g_window != nullptr && wParam == WM_MOUSEMOVE) {
+    if (code == HC_ACTION && g_window != nullptr) {
         const auto* data = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         if ((data->flags & LLMHF_INJECTED) == 0) {
-            static ULONGLONG lastPosted{};
+            static ULONGLONG lastMovePosted{};
             const ULONGLONG now = GetTickCount64();
-            if (now - lastPosted >= 25) {
-                lastPosted = now;
+            const bool isMove = (wParam == WM_MOUSEMOVE);
+            if (!isMove || now - lastMovePosted >= 25) {
+                if (isMove) lastMovePosted = now;
                 PostMessageW(g_window, kUserActivityMessage, 0, 0);
             }
         }
@@ -920,6 +921,10 @@ void saveFromUi() {
 
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
+    case WM_NCCREATE:
+        g_window = window;
+        return DefWindowProcW(window, message, wParam, lParam);
+
     case WM_CREATE:
         g_backgroundBrush = CreateSolidBrush(RGB(246, 248, 251));
         createControls(window);
