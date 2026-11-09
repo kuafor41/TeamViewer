@@ -48,6 +48,8 @@ bool g_powerRequestActive{};
 bool g_pointerMotion{true};
 bool g_keepAwake{true};
 bool g_pauseOnBattery{true};
+bool g_inputMonitoringReady{};
+bool g_powerRequestAttempted{};
 
 ULONGLONG g_lastPhysicalInput{};
 ULONGLONG g_nextActionAt{};
@@ -55,8 +57,6 @@ ULONGLONG g_nextPathStepAt{};
 ULONGLONG g_lastStatusUpdate{};
 std::vector<deskawake::Point> g_activePath;
 std::size_t g_activePathIndex{};
-deskawake::Point g_previousPoint{};
-
 deskawake::Scheduler g_scheduler{};
 std::mt19937 g_random{std::random_device{}()};
 
@@ -71,6 +71,7 @@ void releasePowerRequest() {
         SetThreadExecutionState(ES_CONTINUOUS);
         g_powerRequestActive = false;
     }
+    g_powerRequestAttempted = false;
 }
 
 bool applyPowerRequest() {
@@ -79,6 +80,7 @@ bool applyPowerRequest() {
         return true;
     }
 
+    g_powerRequestAttempted = true;
     const EXECUTION_STATE result = SetThreadExecutionState(
         ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
     );
@@ -100,6 +102,9 @@ void stopSession() {
     setStatus(L"Stopped");
     if (g_startButton != nullptr) EnableWindow(g_startButton, TRUE);
     if (g_stopButton != nullptr) EnableWindow(g_stopButton, FALSE);
+    if (g_pointerCheck != nullptr) EnableWindow(g_pointerCheck, TRUE);
+    if (g_powerCheck != nullptr) EnableWindow(g_powerCheck, TRUE);
+    if (g_batteryCheck != nullptr) EnableWindow(g_batteryCheck, TRUE);
 }
 
 void startSession() {
@@ -108,6 +113,11 @@ void startSession() {
     g_pointerMotion = SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_keepAwake = SendMessageW(g_powerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+
+    if (g_pointerMotion && !g_inputMonitoringReady) {
+        setStatus(L"Cannot start pointer movement; physical input monitoring is unavailable");
+        return;
+    }
 
     g_running = true;
     g_lastPhysicalInput = GetTickCount64();
@@ -122,6 +132,9 @@ void startSession() {
 
     EnableWindow(g_startButton, FALSE);
     EnableWindow(g_stopButton, TRUE);
+    EnableWindow(g_pointerCheck, FALSE);
+    EnableWindow(g_powerCheck, FALSE);
+    EnableWindow(g_batteryCheck, FALSE);
 }
 
 void toggleSession() {
@@ -218,7 +231,6 @@ bool beginHumanPath() {
 
     g_activePath = deskawake::generateHumanTrajectory(start, target, options);
     g_activePathIndex = 1;
-    g_previousPoint = start;
     g_nextPathStepAt = GetTickCount64();
     return !g_activePath.empty();
 }
@@ -245,8 +257,11 @@ void updateRunningState() {
         return;
     }
 
-    if (g_keepAwake && !g_powerRequestActive) applyPowerRequest();
-    else if (!g_keepAwake) releasePowerRequest();
+    if (g_keepAwake && !g_powerRequestActive && !g_powerRequestAttempted) {
+        applyPowerRequest();
+    } else if (!g_keepAwake) {
+        releasePowerRequest();
+    }
 
     if (now - g_lastPhysicalInput < kQuietPeriodMs) {
         abortPath();
@@ -272,7 +287,6 @@ void updateRunningState() {
             return;
         }
 
-        g_previousPoint = point;
         ++g_activePathIndex;
         g_nextPathStepAt = now + 12;
         return;
@@ -437,7 +451,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_lastPhysicalInput = GetTickCount64();
         SetTimer(window, kTimerId, kTimerPeriodMs, nullptr);
         RegisterHotKey(window, kHotkeyId, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'J');
-        if (!installHooks()) setStatus(L"Input monitoring could not be initialized");
+        g_inputMonitoringReady = installHooks();
+        if (!g_inputMonitoringReady) {
+            setStatus(L"Input monitoring unavailable; pointer movement will remain disabled");
+        }
         return 0;
 
     case WM_COMMAND:

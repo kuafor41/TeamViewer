@@ -1,29 +1,30 @@
 # DeskAwake
 
-A transparent Windows desktop utility for session and power management.
+DeskAwake is a native Windows desktop utility for session and power management.
 
-## Project status
+## Current implementation
 
-The repository is being initialized. The first milestone targets Windows 10/11 x64 with a portable ZIP as the primary distribution artifact.
+- Native Win32 x64 desktop application with an original DeskAwake identity.
+- System tray operation and a global Ctrl+Shift+J start/stop hotkey.
+- Optional Windows display/system power request through SetThreadExecutionState.
+- Physical keyboard and mouse activity monitoring with automatic pause and timer reset.
+- Battery-aware pause option.
+- Bounded 10–89 second Weibull scheduler with the documented 70% / 30% action router.
+- C++20 motion core: cubic Bezier curves, S-curve easing, seeded Perlin-style noise, tremor and overshoot.
+- Core unit tests and a Windows GitHub Actions portable ZIP build.
 
-## Product principles
-
-- The application identifies itself as DeskAwake and uses original project branding.
-- Power requests are explicit, bounded by the selected session, and released on stop/exit.
-- User-driven input takes precedence: physical keyboard and mouse activity pauses scheduled activity.
-- Motion mathematics is isolated from operating-system integration and covered by deterministic tests.
-- No security-product bypass, concealment, or impersonation features are part of this project.
-
-## Planned architecture
-
-- **Core:** C++20 motion mathematics and bounded scheduler.
-- **Windows platform:** Win32 UI, system tray, input monitoring, power management.
-- **Packaging:** portable ZIP first; installer package afterward.
-- **CI:** Windows x64 build and automated tests through GitHub Actions.
+The pointer-motion option is explicitly visible in the application UI. The application does not impersonate another product or include security-product bypass features.
 
 ## Build
 
-The Windows build uses CMake and the MSVC toolchain. See [BUILDING.md](docs/BUILDING.md) as the build instructions are added.
+See [docs/BUILDING.md](docs/BUILDING.md). The Windows workflow builds Release x64, runs the core tests, and publishes DeskAwake-win-x64-portable.zip as a workflow artifact.
+
+## Planned follow-up work
+
+- Editable interval, movement distance/angle, and trajectory parameters.
+- Weekly schedule, countdown/auto-exit, and startup preferences.
+- Original application and tray icon assets.
+- Installer package and Authenticode signing preparation.
 
 ## License
 

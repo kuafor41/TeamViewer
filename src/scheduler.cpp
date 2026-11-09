@@ -9,8 +9,9 @@ namespace deskawake {
 Scheduler::Scheduler(SchedulerSettings settings, std::uint64_t seed)
     : settings_(settings), random_(seed) {
     if (settings_.minimum_seconds < 1 ||
-        settings_.maximum_seconds < settings_.minimum_seconds) {
-        throw std::invalid_argument("invalid scheduler interval bounds");
+        settings_.maximum_seconds < settings_.minimum_seconds ||
+        settings_.maximum_seconds > 89) {
+        throw std::invalid_argument("scheduler bounds must satisfy 1 <= minimum <= maximum <= 89");
     }
     if (!std::isfinite(settings_.weibull_shape) || settings_.weibull_shape <= 0.0 ||
         !std::isfinite(settings_.weibull_scale) || settings_.weibull_scale <= 0.0) {

@@ -98,8 +98,8 @@ void testInvalidInputs() {
     threw = false;
     try {
         deskawake::SchedulerSettings settings{};
-        settings.minimum_seconds = 90;
-        settings.maximum_seconds = 10;
+        settings.minimum_seconds = 10;
+        settings.maximum_seconds = 90;
         (void)deskawake::Scheduler(settings, 1);
     } catch (const std::invalid_argument&) {
         threw = true;
