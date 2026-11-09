@@ -45,9 +45,33 @@ void testPoisson(){
     for(int i=0;i<100;++i)require(first.nextDelaySeconds()==repeat.nextDelaySeconds(),"Poisson seeded sequence");
 }
 void testRouter(){
-    deskawake::Scheduler s({},0xABCDEFu);constexpr int n=20000;int micro=0;
-    for(int i=0;i<n;++i)if(s.nextAction()==deskawake::ActionKind::Micro)++micro;
-    const double ratio=static_cast<double>(micro)/n;require(ratio>0.68&&ratio<0.72,"70/30 routing");
+    deskawake::Scheduler s({},0xABCDEFu);constexpr int n=20000;int fast=0;
+    for(int i=0;i<n;++i)if(s.nextAction()==deskawake::ActionKind::FastTrajectory)++fast;
+    const double ratio=static_cast<double>(fast)/n;require(ratio>0.68&&ratio<0.72,"70/30 routing");
+}
+void testEveryRoutedActionMoves(){
+    deskawake::Scheduler scheduler({},0x71A55u);
+    constexpr deskawake::Point start{700.0,420.0};
+    constexpr deskawake::Point target{1010.0,690.0};
+    int fastCount=0,fullCount=0;
+    for(int i=0;i<1000;++i){
+        const auto action=scheduler.nextAction();
+        const auto count=deskawake::trajectorySampleCount(action);
+        require(count==(action==deskawake::ActionKind::FastTrajectory?8U:28U),
+                "action maps to a real trajectory profile");
+        deskawake::TrajectoryOptions options{};
+        options.sample_count=count;
+        options.seed=static_cast<std::uint32_t>(i+1);
+        const auto path=deskawake::generateHumanTrajectory(start,target,options);
+        require(path.size()==count,"routed path contains its configured points");
+        require(path.front().x==start.x&&path.front().y==start.y,"routed path preserves start");
+        require(path.back().x==target.x&&path.back().y==target.y,"routed path reaches target");
+        require(std::hypot(path.back().x-path.front().x,path.back().y-path.front().y)>1.0,
+                "every routed action produces a persistent displacement");
+        if(action==deskawake::ActionKind::FastTrajectory)++fastCount;
+        else ++fullCount;
+    }
+    require(fastCount>0&&fullCount>0,"both movement profiles are exercised");
 }
 void testValidation(){
     bool threw=false;
@@ -59,5 +83,5 @@ void testValidation(){
     catch(const std::invalid_argument&){threw=true;}require(threw,"lambda validation");
 }
 }
-int main(){try{testBezier();testSCurve();testPerlin();testTrajectory();testPoisson();testRouter();testValidation();std::cout<<"All Acrobat core tests passed.\\n";return 0;}
+int main(){try{testBezier();testSCurve();testPerlin();testTrajectory();testPoisson();testRouter();testEveryRoutedActionMoves();testValidation();std::cout<<"All Acrobat core tests passed.\\n";return 0;}
 catch(const std::exception& e){std::cerr<<"Test failure: "<<e.what()<<'\\n';return 1;}}

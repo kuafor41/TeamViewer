@@ -2,7 +2,7 @@
   <Package
     Name="Acrobat"
     Manufacturer="Acrobat Project"
-    Version="0.3.2"
+    Version="0.3.3"
     UpgradeCode="$(var.UpgradeCode)"
     Scope="perUser">
 

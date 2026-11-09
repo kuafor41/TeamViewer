@@ -818,35 +818,7 @@ bool sendAbsoluteMove(deskawake::Point point) {
     return SendInput(1, &input, sizeof(INPUT)) == 1;
 }
 
-bool sendMicroMove() {
-    POINT current{};
-    if (!GetCursorPos(&current)) return false;
-    const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const int right = left + std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN)) - 1;
-    const int bottom = top + std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN)) - 1;
-    std::uniform_int_distribution<int> delta(-1, 1);
-
-    POINT offset{};
-    for (int attempt = 0; attempt < 8; ++attempt) {
-        const int dx = delta(g_random);
-        const int dy = delta(g_random);
-        if (dx == 0 && dy == 0) continue;
-        offset.x = std::clamp<int>(static_cast<int>(current.x) + dx, left, right);
-        offset.y = std::clamp<int>(static_cast<int>(current.y) + dy, top, bottom);
-        if (offset.x != current.x || offset.y != current.y) break;
-    }
-    if (offset.x == current.x && offset.y == current.y) return false;
-
-    INPUT inputs[2]{};
-    inputs[0] = makeAbsoluteMove({static_cast<double>(offset.x), static_cast<double>(offset.y)});
-    inputs[1] = makeAbsoluteMove({static_cast<double>(current.x), static_cast<double>(current.y)});
-    const UINT sent = SendInput(2, inputs, sizeof(INPUT));
-    if (sent != 2) SetCursorPos(current.x, current.y);
-    return sent == 2;
-}
-
-bool beginHumanPath() {
+bool beginHumanPath(std::size_t sampleCount) {
     POINT current{};
     if (!GetCursorPos(&current)) return false;
 
@@ -892,7 +864,7 @@ bool beginHumanPath() {
     if (!targetValid) return false;
 
     deskawake::TrajectoryOptions options{};
-    options.sample_count = 28;
+    options.sample_count = sampleCount;
     options.overshoot_fraction = 0.035;
     options.perlin_amplitude_pixels = 0.35;
     options.gaussian_sigma_pixels = 0.18;
@@ -984,18 +956,16 @@ void updateRunningState() {
             static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
     }
     if (now >= g_nextActionAt) {
-        if (g_scheduler.nextAction() == deskawake::ActionKind::Micro) {
-            const bool moved = sendMicroMove();
-            g_nextActionAt = now +
-                static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
-            setStatus(moved ? L"Session active; micro movement completed"
-                            : L"Session active; micro movement unavailable");
-        } else if (!beginHumanPath()) {
+        const deskawake::ActionKind action = g_scheduler.nextAction();
+        const std::size_t sampleCount = deskawake::trajectorySampleCount(action);
+        if (!beginHumanPath(sampleCount)) {
             g_nextActionAt = now +
                 static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
             setStatus(L"Session active; could not create pointer route");
         } else {
-            setStatus(L"Session active; pointer route in progress");
+            setStatus(action == deskawake::ActionKind::FastTrajectory
+                ? L"Session active; fast pointer route in progress"
+                : L"Session active; pointer route in progress");
         }
         return;
     }

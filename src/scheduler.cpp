@@ -13,9 +13,10 @@ Scheduler::Scheduler(SchedulerSettings settings, std::uint64_t seed)
     if (!std::isfinite(settings_.poisson_lambda) || settings_.poisson_lambda <= 0.0) {
         throw std::invalid_argument("Poisson lambda must be positive and finite");
     }
-    if (!std::isfinite(settings_.micro_probability) ||
-        settings_.micro_probability < 0.0 || settings_.micro_probability > 1.0) {
-        throw std::invalid_argument("micro_probability must be between 0 and 1");
+    if (!std::isfinite(settings_.fast_trajectory_probability) ||
+        settings_.fast_trajectory_probability < 0.0 ||
+        settings_.fast_trajectory_probability > 1.0) {
+        throw std::invalid_argument("fast_trajectory_probability must be between 0 and 1");
     }
 }
 std::uint32_t Scheduler::nextDelaySeconds() {
@@ -28,7 +29,7 @@ std::uint32_t Scheduler::nextDelaySeconds() {
         static_cast<int>(settings_.maximum_seconds)));
 }
 ActionKind Scheduler::nextAction() {
-    std::bernoulli_distribution chooseMicro(settings_.micro_probability);
-    return chooseMicro(random_) ? ActionKind::Micro : ActionKind::HumanTrajectory;
+    std::bernoulli_distribution chooseFast(settings_.fast_trajectory_probability);
+    return chooseFast(random_) ? ActionKind::FastTrajectory : ActionKind::HumanTrajectory;
 }
 } // namespace deskawake

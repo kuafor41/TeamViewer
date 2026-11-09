@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0091 NEW)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-project(Acrobat VERSION 0.3.2 LANGUAGES CXX)
+project(Acrobat VERSION 0.3.3 LANGUAGES CXX
 
 option(ACROBAT_BUILD_TESTS "Build the core unit tests" ON)
 
