@@ -167,7 +167,14 @@ void updateStatusParts();
 void updateDiagnostics();
 void setStatus(const std::wstring& value) {
     if (g_statusLabel != nullptr) {
-        SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
+        constexpr std::size_t kVisibleStatusChars = 32;
+        std::wstring visible = value;
+        if (visible.size() > kVisibleStatusChars) {
+            visible.resize(kVisibleStatusChars - 3);
+            visible += L"...";
+        }
+        SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(visible.c_str()));
+        SendMessageW(g_statusLabel, SB_SETTIPTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
     }
     if (g_window != nullptr) {
         std::wstring title = L"Acrobat";
@@ -616,7 +623,7 @@ void createControls(HWND window) {
         SS_LEFT, 30, 310, 450, 36, 0);
 
     g_statusLabel = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
-        WS_CHILD | WS_VISIBLE,
+        WS_CHILD | WS_VISIBLE | SBARS_TOOLTIPS,
         0, 0, 0, 0, window, reinterpret_cast<HMENU>(IdStatus),
         GetModuleHandleW(nullptr), nullptr);
     setControlFont(g_statusLabel, g_statusFont);
