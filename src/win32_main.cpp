@@ -1218,6 +1218,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_CREATE:
         g_backgroundBrush = CreateSolidBrush(RGB(246, 248, 251));
         createControls(window);
+        setStatus(L"Stopped");
+        updateStatusParts();
+        updateDiagnostics();
         if (g_settings.startupEnabled && !updateStartupRegistration(true)) {
             setStatus(L"Windows startup registration could not be restored");
         }
