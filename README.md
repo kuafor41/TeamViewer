@@ -5,10 +5,13 @@ Acrobat is an independent Windows desktop utility for pointer control and sessio
 ## Current implementation
 
 - Native Win32 desktop application for Windows 10/11, built for x64 and x86.
-- Compact tabbed UI, system tray, and Ctrl+Shift+J start/stop hotkey.
+- Compact three-tab UI with a docked four-part status bar, system tray, and configurable global hotkey (Ctrl+Shift+J, Ctrl+Alt+J, Ctrl+Shift+F10, Ctrl+Alt+F12).
 - Optional SetThreadExecutionState display/system power request.
 - Physical keyboard/mouse activity hooks with automatic pause and timer reset.
-- Battery-aware pause.
+- Battery-aware pause when unplugged or at/below 20% charge.
+- User-defined session duration (0 = unlimited) with optional exit after the timer expires.
+- Native Windows Jump List tasks for Open, Start session, Stop session, and Exit; commands forward to the existing instance.
+- Local Diagnostics page showing Acrobat process CPU, working set, battery source/level, physical input event count, and session count.
 - Poisson interval formula from the product plan: T_interval = min(89, max(10, Poisson(lambda = 42))).
 - 70% / 30% action routing.
 - Motion core: cubic Bezier, smoothstep S-curve, seeded 2D Perlin-style noise, Gaussian tremor and overshoot.
@@ -16,7 +19,12 @@ Acrobat is an independent Windows desktop utility for pointer control and sessio
 - Weekly schedule with day selection and local start/end times.
 - Session countdown, optional app exit, and optional Windows startup.
 - Optional launch of a user-selected file, folder, or URL on session start or at a selected interval.
+- The window title reflects the current Acrobat state; the app keeps its own original name and icon.
 - x64 and x86 portable ZIPs and per-user MSI installers produced by GitHub Actions (WiX 5.0.2); MSVC runtime is statically linked for a self-contained EXE.
+
+## Identity and diagnostics
+
+Acrobat keeps its own name and original icon. It does not impersonate Windows utilities or modify PE identity to conceal the process. The Diagnostics page reports only local application/resource measurements; it does not probe EDR/UEBA products or attempt to defeat their detections.
 
 ## Formula fidelity
 

@@ -36,8 +36,14 @@ Non-portable runs store settings under the current user's roaming AppData folder
 Build artifacts are currently unsigned. Authenticode signing will be configured only after an eligible certificate or open-source signing approval is available.
 
 
+## UI, status and diagnostics
+
+The compact main window includes a native status bar docked to its bottom edge. It displays state, session time remaining/elapsed, the next timer tick, and power source. The Session tab accepts any whole-minute duration from 0 (unlimited) through 10,080 (7 days). The schedule tab offers four configurable global shortcut combinations. The Diagnostics tab displays local process CPU and working set, battery state, physical input event count, and session count.
+
+The Windows Jump List contains Open, Start session, Stop session, and Exit tasks. Commands are forwarded to the running instance rather than launching a second main window.
+
 ## MSI installer
 
 The Windows Actions matrix also produces a per-user MSI using WiX Toolset 5.0.2. It installs Acrobat under the current user's LocalAppData\Programs\Acrobat directory and creates a Start Menu shortcut. It does not require elevation. Separate x64 and x86 MSIs are uploaded as workflow artifacts.
 
-The portable packages remain independent and store their settings beside the executable through portable.flag.
+The portable packages remain independent and store their settings beside the executable through portable.flag. The app keeps its original Acrobat identity; EDR/UEBA evasion or masquerading is not implemented.
