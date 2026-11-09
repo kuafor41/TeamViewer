@@ -14,12 +14,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: acrobat-windows-\${{ github.ref }}
+  group: acrobat-windows-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Build \${{ matrix.arch }}
+    name: Build ${{ matrix.arch }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -33,24 +33,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build-\${{ matrix.arch }} -A \${{ matrix.cmake_arch }} -DACROBAT_BUILD_TESTS=ON
+        run: cmake -S . -B build-${{ matrix.arch }} -A ${{ matrix.cmake_arch }} -DACROBAT_BUILD_TESTS=ON
       - name: Build Release
-        run: cmake --build build-\${{ matrix.arch }} --config Release --parallel
+        run: cmake --build build-${{ matrix.arch }} --config Release --parallel
       - name: Run core tests
-        run: ctest --test-dir build-\${{ matrix.arch }} -C Release --output-on-failure
+        run: ctest --test-dir build-${{ matrix.arch }} -C Release --output-on-failure
       - name: Assemble portable package
         shell: pwsh
         run: |
-          $package = "dist/Acrobat-\${{ matrix.arch }}-portable"
+          $package = "dist/Acrobat-${{ matrix.arch }}-portable"
           New-Item -ItemType Directory -Force -Path $package | Out-Null
-          Copy-Item "build-\${{ matrix.arch }}/Release/Acrobat.exe" $package
+          Copy-Item "build-${{ matrix.arch }}/Release/Acrobat.exe" $package
           Copy-Item "README.md" $package
           Copy-Item "LICENSE" $package
           Set-Content -Path "$package/portable.flag" -Value ""
-          Compress-Archive -Path "$package/*" -DestinationPath "dist/Acrobat-win-\${{ matrix.arch }}-portable.zip" -Force
+          Compress-Archive -Path "$package/*" -DestinationPath "dist/Acrobat-win-${{ matrix.arch }}-portable.zip" -Force
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: Acrobat-win-\${{ matrix.arch }}-portable
-          path: dist/Acrobat-win-\${{ matrix.arch }}-portable.zip
+          name: Acrobat-win-${{ matrix.arch }}-portable
+          path: dist/Acrobat-win-${{ matrix.arch }}-portable.zip
           if-no-files-found: error

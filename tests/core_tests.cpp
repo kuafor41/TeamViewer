@@ -37,10 +37,12 @@ void testTrajectory(){
     for(std::size_t i=0;i<p.size();++i)require(p[i].x==repeat[i].x&&p[i].y==repeat[i].y,"trajectory seeded");
 }
 void testPoisson(){
-    deskawake::Scheduler s({},0xC0FFEEu);
+    deskawake::Scheduler sample({},0xC0FFEEu);
     constexpr int n=50000;double sum=0;
-    for(int i=0;i<n;++i){auto d=s.nextDelaySeconds();require(d>=10&&d<=89,"Poisson clamp");sum+=d;}
+    for(int i=0;i<n;++i){auto d=sample.nextDelaySeconds();require(d>=10&&d<=89,"Poisson clamp");sum+=d;}
     const double mean=sum/n;require(mean>41&&mean<43,"Poisson lambda mean");
+    deskawake::Scheduler first({},0xA551u),repeat({},0xA551u);
+    for(int i=0;i<100;++i)require(first.nextDelaySeconds()==repeat.nextDelaySeconds(),"Poisson seeded sequence");
 }
 void testRouter(){
     deskawake::Scheduler s({},0xABCDEFu);constexpr int n=20000;int micro=0;

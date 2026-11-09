@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cwchar>
+#include <iterator>
+#include <utility>
 #include <random>
 #include <string>
 #include <vector>
@@ -64,7 +66,7 @@ struct AppSettings {
     int countdownMinutes{};
     bool autoExit{};
     bool scheduleEnabled{};
-    unsigned int daysMask{0x1Fu};
+    unsigned int daysMask{0x3Eu};
     std::wstring startTime{L"09:00"};
     std::wstring endTime{L"18:00"};
     bool startupEnabled{};
@@ -184,7 +186,7 @@ void loadSettings() {
     g_settings.countdownMinutes = std::clamp(readInt(L"Duration", L"CountdownMinutes", 0), 0, 1440);
     g_settings.autoExit = readInt(L"Duration", L"AutoExit", 0) != 0;
     g_settings.scheduleEnabled = readInt(L"Schedule", L"Enabled", 0) != 0;
-    g_settings.daysMask = static_cast<unsigned int>(readInt(L"Schedule", L"DaysMask", 0x1F)) & 0x7F;
+    g_settings.daysMask = static_cast<unsigned int>(readInt(L"Schedule", L"DaysMask", 0x3E)) & 0x7F;
     g_settings.startTime = readString(L"Schedule", L"Start", L"09:00");
     g_settings.endTime = readString(L"Schedule", L"End", L"18:00");
     g_settings.startupEnabled = readInt(L"General", L"Startup", 0) != 0;
@@ -220,8 +222,6 @@ bool updateStartupRegistration(bool enabled) {
 
     LONG result = ERROR_SUCCESS;
     if (enabled) {
-        const std::wstring command = L"\"" + executableDirectory() +
-            L"Acrobat.exe\" --minimized";
         // Resolve the executable path independently of its containing directory.
         std::array<wchar_t, MAX_PATH> exe{};
         const DWORD length = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
@@ -403,17 +403,17 @@ void createControls(HWND window) {
 
     g_startButton = CreateWindowW(L"BUTTON", L"Start session",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        350, 19, 118, 32, window, reinterpret_cast<HMENU>(IdStart), nullptr, nullptr);
+        320, 19, 88, 32, window, reinterpret_cast<HMENU>(IdStart), nullptr, nullptr);
     g_stopButton = CreateWindowW(L"BUTTON", L"Stop",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        476, 19, 58, 32, window, reinterpret_cast<HMENU>(IdStop), nullptr, nullptr);
+        414, 19, 74, 32, window, reinterpret_cast<HMENU>(IdStop), nullptr, nullptr);
     setControlFont(g_startButton, g_regularFont);
     setControlFont(g_stopButton, g_regularFont);
     EnableWindow(g_stopButton, FALSE);
 
     g_tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS,
-        18, 82, 516, 300, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
+        14, 78, 490, 287, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
     setControlFont(g_tabs, g_regularFont);
     TCITEMW tab{};
     tab.mask = TCIF_TEXT;
@@ -423,25 +423,25 @@ void createControls(HWND window) {
     TabCtrl_InsertItem(g_tabs, 1, &tab);
 
     g_pointerCheck = createPageControl(0, L"BUTTON", L"Enable pointer movement",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 122, 205, 24, IdPointer);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 116, 195, 24, IdPointer);
     g_powerCheck = createPageControl(0, L"BUTTON", L"Keep display and system awake",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 264, 122, 235, 24, IdPower);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 240, 116, 220, 24, IdPower);
     g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause pointer activity on battery",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 153, 250, 24, IdBattery);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 147, 240, 24, IdBattery);
 
     createPageControl(0, L"STATIC", L"Travel distance (px)", SS_LEFT,
-        34, 197, 132, 22, 0);
+        30, 190, 118, 22, 0);
     g_distanceEdit = createPageControl(0, L"EDIT", L"120",
-        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 164, 194, 62, 25, IdDistance);
+        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 150, 187, 62, 25, IdDistance);
     createPageControl(0, L"STATIC", L"Angle (-1 = random)", SS_LEFT,
-        264, 197, 138, 22, 0);
+        238, 190, 130, 22, 0);
     g_angleEdit = createPageControl(0, L"EDIT", L"-1",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 406, 194, 54, 25, IdAngle);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 370, 187, 55, 25, IdAngle);
 
     createPageControl(0, L"STATIC", L"Session countdown", SS_LEFT,
-        34, 253, 132, 22, 0);
+        30, 243, 118, 22, 0);
     g_countdownCombo = createPageControl(0, WC_COMBOBOXW, L"",
-        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 164, 249, 126, 120, IdCountdown);
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 150, 239, 126, 110, IdCountdown);
     const std::array<std::pair<const wchar_t*, int>, 5> countdownItems{{
         {L"No limit", 0}, {L"30 minutes", 30}, {L"1 hour", 60},
         {L"2 hours", 120}, {L"4 hours", 240}
@@ -452,36 +452,36 @@ void createControls(HWND window) {
         SendMessageW(g_countdownCombo, CB_SETITEMDATA, index, item.second);
     }
     g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit app when finished",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 312, 251, 180, 24, IdAutoExit);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 295, 241, 170, 24, IdAutoExit);
     createPageControl(0, L"STATIC",
         L"Physical input pauses pointer movement; Ctrl+Shift+J toggles the session.",
-        SS_LEFT, 34, 302, 460, 34, 0);
+        SS_LEFT, 30, 286, 440, 34, 0);
 
     g_scheduleCheck = createPageControl(1, L"BUTTON", L"Enable weekly schedule",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 119, 220, 24, IdSchedule);
-    createPageControl(1, L"STATIC", L"Active days", SS_LEFT, 34, 153, 100, 20, 0);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 112, 220, 24, IdSchedule);
+    createPageControl(1, L"STATIC", L"Active days", SS_LEFT, 30, 144, 100, 20, 0);
     const std::array<const wchar_t*, 7> dayNames{
         L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat"
     };
     for (int index = 0; index < 7; ++index) {
         g_dayChecks[index] = createPageControl(1, L"BUTTON", dayNames[index],
-            WS_TABSTOP | BS_AUTOCHECKBOX, 34 + index * 65, 176, 58, 22, IdDayMonday + index);
+            WS_TABSTOP | BS_AUTOCHECKBOX, 22 + index * 64, 166, 56, 22, IdDayMonday + index);
     }
-    createPageControl(1, L"STATIC", L"Start (HH:MM)", SS_LEFT, 34, 216, 100, 22, 0);
+    createPageControl(1, L"STATIC", L"Start (HH:MM)", SS_LEFT, 30, 205, 95, 22, 0);
     g_startTimeEdit = createPageControl(1, L"EDIT", L"09:00",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 136, 212, 72, 25, IdStartTime);
-    createPageControl(1, L"STATIC", L"End (HH:MM)", SS_LEFT, 244, 216, 88, 22, 0);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 130, 201, 72, 25, IdStartTime);
+    createPageControl(1, L"STATIC", L"End (HH:MM)", SS_LEFT, 236, 205, 88, 22, 0);
     g_endTimeEdit = createPageControl(1, L"EDIT", L"18:00",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 332, 212, 72, 25, IdEndTime);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 328, 201, 72, 25, IdEndTime);
     g_startupCheck = createPageControl(1, L"BUTTON", L"Start with Windows (minimized)",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 251, 245, 24, IdStartup);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 237, 245, 24, IdStartup);
     g_launchTargetCheck = createPageControl(1, L"BUTTON", L"Open target on session start",
-        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 282, 220, 24, IdLaunchTarget);
+        WS_TABSTOP | BS_AUTOCHECKBOX, 30, 269, 210, 24, IdLaunchTarget);
     g_targetPathEdit = createPageControl(1, L"EDIT", L"",
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 254, 280, 238, 25, IdTargetPath);
-    createPageControl(1, L"STATIC", L"Repeat", SS_LEFT, 34, 318, 54, 22, 0);
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 242, 267, 235, 25, IdTargetPath);
+    createPageControl(1, L"STATIC", L"Repeat", SS_LEFT, 30, 303, 54, 22, 0);
     g_targetIntervalCombo = createPageControl(1, WC_COMBOBOXW, L"",
-        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 92, 314, 116, 100, IdTargetInterval);
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 88, 299, 116, 100, IdTargetInterval);
     const std::array<std::pair<const wchar_t*, int>, 4> intervalItems{{
         {L"On start only", 0}, {L"Every 5 min", 5},
         {L"Every 15 min", 15}, {L"Every 30 min", 30}
@@ -493,7 +493,7 @@ void createControls(HWND window) {
     }
 
     g_statusLabel = CreateWindowW(L"STATIC", L"Stopped",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, 24, 392, 492, 24,
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 24, 377, 465, 24,
         window, reinterpret_cast<HMENU>(IdStatus), nullptr, nullptr);
     setControlFont(g_statusLabel, g_regularFont);
     populateControlsFromSettings();
@@ -913,9 +913,6 @@ void removeHooks() {
 void saveFromUi() {
     syncSettingsFromControls();
     saveSettings();
-    if (!updateStartupRegistration(g_settings.startupEnabled)) {
-        setStatus(L"Settings saved; could not update Windows startup registration");
-    }
 }
 
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -923,6 +920,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_CREATE:
         g_backgroundBrush = CreateSolidBrush(RGB(246, 248, 251));
         createControls(window);
+        if (g_settings.startupEnabled && !updateStartupRegistration(true)) {
+            setStatus(L"Windows startup registration could not be restored");
+        }
         g_lastPhysicalInput = GetTickCount64();
         SetTimer(window, kEngineTimerId, kEngineTimerMs, nullptr);
         SetTimer(window, kScheduleTimerId, 1000, nullptr);
@@ -962,8 +962,12 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE ||
             HIWORD(wParam) == EN_KILLFOCUS) {
             saveFromUi();
-            if (LOWORD(wParam) == IdStartup && g_settings.startupEnabled) {
-                setStatus(L"Windows startup enabled");
+            if (LOWORD(wParam) == IdStartup) {
+                if (!updateStartupRegistration(g_settings.startupEnabled)) {
+                    setStatus(L"Could not update Windows startup registration");
+                } else {
+                    setStatus(g_settings.startupEnabled ? L"Windows startup enabled" : L"Windows startup disabled");
+                }
             }
         }
         break;
@@ -1089,7 +1093,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     g_window = CreateWindowExW(
         WS_EX_APPWINDOW, kWindowClass, kWindowTitle,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 560, 475,
+        CW_USEDEFAULT, CW_USEDEFAULT, 520, 440,
         nullptr, nullptr, instance, nullptr);
     if (g_window == nullptr) return static_cast<int>(GetLastError());
 

@@ -20,8 +20,12 @@ Scheduler::Scheduler(SchedulerSettings settings, std::uint64_t seed)
 }
 std::uint32_t Scheduler::nextDelaySeconds() {
     // T_interval = min(89, max(10, Poisson(lambda = 42))).
-    std::poisson_distribution<std::uint32_t> distribution(settings_.poisson_lambda);
-    return std::clamp(distribution(random_), settings_.minimum_seconds, settings_.maximum_seconds);
+    std::poisson_distribution<int> distribution(settings_.poisson_lambda);
+    const int sampled = distribution(random_);
+    return static_cast<std::uint32_t>(std::clamp(
+        sampled,
+        static_cast<int>(settings_.minimum_seconds),
+        static_cast<int>(settings_.maximum_seconds)));
 }
 ActionKind Scheduler::nextAction() {
     std::bernoulli_distribution chooseMicro(settings_.micro_probability);

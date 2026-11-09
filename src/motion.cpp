@@ -62,7 +62,7 @@ std::vector<Point> generateHumanTrajectory(Point start, Point target, const Traj
     const Point overshoot{target.x+tangent.x*over,target.y+tangent.y*over};
     std::mt19937 rng(o.seed);
     std::uniform_real_distribution<double> bendDist(-0.12,0.12);
-    std::normal_distribution<double> gaussian(0.0,o.gaussian_sigma_pixels);
+    std::normal_distribution<double> gaussian(0.0,std::max(1e-9,o.gaussian_sigma_pixels));
     const double bend=distance*bendDist(rng);
     const Point c1{start.x+tangent.x*distance*0.30+normal.x*bend,
                    start.y+tangent.y*distance*0.30+normal.y*bend};
@@ -80,8 +80,8 @@ std::vector<Point> generateHumanTrajectory(Point start, Point target, const Traj
         Point p{};
         if(eased<=split) p=cubicBezier(start,c1,c2,overshoot,eased/split);
         else p=cubicBezier(overshoot,r1,r2,target,(eased-split)/(1.0-split));
-        p.x+=perlin2D(eased*7.0,0.37,o.seed)*perlinAmp+gaussian(rng);
-        p.y+=perlin2D(eased*7.0,12.91,o.seed^0x9e3779b9u)*perlinAmp+gaussian(rng);
+        p.x+=perlin2D(eased*7.0,0.37,o.seed)*perlinAmp+gaussian(rng)*(o.gaussian_sigma_pixels > 0.0 ? 1.0 : 0.0);
+        p.y+=perlin2D(eased*7.0,12.91,o.seed^0x9e3779b9u)*perlinAmp+gaussian(rng)*(o.gaussian_sigma_pixels > 0.0 ? 1.0 : 0.0);
         result.push_back(p);
     }
     result.front()=start; result.back()=target; return result;
