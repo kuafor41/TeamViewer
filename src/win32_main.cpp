@@ -1,69 +1,503 @@
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <commctrl.h>
+#include <winreg.h>
 
 #include "deskawake/motion.hpp"
 #include "deskawake/scheduler.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cwchar>
 #include <random>
 #include <string>
 #include <vector>
 
 namespace {
 
-constexpr wchar_t kWindowClass[] = L"DeskAwakeMainWindow";
-constexpr wchar_t kWindowTitle[] = L"DeskAwake";
+constexpr wchar_t kWindowClass[] = L"AcrobatMainWindow";
+constexpr wchar_t kWindowTitle[] = L"Acrobat";
+constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kRunValue[] = L"Acrobat";
 constexpr UINT kTrayMessage = WM_APP + 10;
 constexpr UINT kUserActivityMessage = WM_APP + 11;
-constexpr UINT_PTR kTimerId = 1;
-constexpr UINT kTimerPeriodMs = 20;
+constexpr UINT_PTR kEngineTimerId = 1;
+constexpr UINT_PTR kScheduleTimerId = 2;
+constexpr UINT kEngineTimerMs = 20;
 constexpr ULONGLONG kQuietPeriodMs = 1500;
-
-constexpr int kIdStart = 1001;
-constexpr int kIdStop = 1002;
-constexpr int kIdPointer = 1003;
-constexpr int kIdPower = 1004;
-constexpr int kIdBattery = 1005;
-constexpr int kIdStatus = 1006;
-constexpr int kIdTrayShow = 1101;
-constexpr int kIdTrayToggle = 1102;
-constexpr int kIdTrayExit = 1103;
 constexpr int kHotkeyId = 1;
 
+enum ControlId : int {
+    IdTabs = 2000,
+    IdStart = 2001,
+    IdStop = 2002,
+    IdPointer = 2003,
+    IdPower = 2004,
+    IdBattery = 2005,
+    IdDistance = 2006,
+    IdAngle = 2007,
+    IdCountdown = 2008,
+    IdAutoExit = 2009,
+    IdSchedule = 2010,
+    IdDayMonday = 2020,
+    IdStartTime = 2030,
+    IdEndTime = 2031,
+    IdStartup = 2032,
+    IdLaunchTarget = 2033,
+    IdTargetPath = 2034,
+    IdTargetInterval = 2035,
+    IdStatus = 2040,
+    IdTrayShow = 2050,
+    IdTrayToggle = 2051,
+    IdTrayExit = 2052
+};
+
+struct AppSettings {
+    bool pointerEnabled{true};
+    bool keepAwake{true};
+    bool pauseOnBattery{true};
+    int distancePixels{120};
+    int angleDegrees{-1};
+    int countdownMinutes{};
+    bool autoExit{};
+    bool scheduleEnabled{};
+    unsigned int daysMask{0x1Fu};
+    std::wstring startTime{L"09:00"};
+    std::wstring endTime{L"18:00"};
+    bool startupEnabled{};
+    bool launchTarget{};
+    std::wstring targetPath;
+    int targetIntervalMinutes{};
+};
+
 HWND g_window{};
+HWND g_tabs{};
 HWND g_startButton{};
 HWND g_stopButton{};
 HWND g_pointerCheck{};
 HWND g_powerCheck{};
 HWND g_batteryCheck{};
+HWND g_distanceEdit{};
+HWND g_angleEdit{};
+HWND g_countdownCombo{};
+HWND g_autoExitCheck{};
+HWND g_scheduleCheck{};
+HWND g_dayChecks[7]{};
+HWND g_startTimeEdit{};
+HWND g_endTimeEdit{};
+HWND g_startupCheck{};
+HWND g_launchTargetCheck{};
+HWND g_targetPathEdit{};
+HWND g_targetIntervalCombo{};
 HWND g_statusLabel{};
+
+std::vector<HWND> g_generalControls;
+std::vector<HWND> g_scheduleControls;
+HFONT g_regularFont{};
+HFONT g_titleFont{};
+HBRUSH g_backgroundBrush{};
 
 HHOOK g_mouseHook{};
 HHOOK g_keyboardHook{};
+bool g_inputMonitoringReady{};
 bool g_trayAdded{};
 bool g_running{};
 bool g_powerRequestActive{};
-bool g_pointerMotion{true};
-bool g_keepAwake{true};
-bool g_pauseOnBattery{true};
-bool g_inputMonitoringReady{};
 bool g_powerRequestAttempted{};
-
+bool g_startedBySchedule{};
+bool g_scheduleStateKnown{};
+bool g_lastScheduleActive{};
 ULONGLONG g_lastPhysicalInput{};
 ULONGLONG g_nextActionAt{};
+ULONGLONG g_countdownDeadline{};
 ULONGLONG g_nextPathStepAt{};
 ULONGLONG g_lastStatusUpdate{};
+ULONGLONG g_nextTargetLaunchAt{};
 std::vector<deskawake::Point> g_activePath;
 std::size_t g_activePathIndex{};
+AppSettings g_settings{};
 deskawake::Scheduler g_scheduler{};
 std::mt19937 g_random{std::random_device{}()};
+std::wstring g_iniPath;
 
-void setStatus(const std::wstring& text) {
-    if (g_statusLabel != nullptr) {
-        SetWindowTextW(g_statusLabel, text.c_str());
+void setStatus(const std::wstring& value) {
+    if (g_statusLabel != nullptr) SetWindowTextW(g_statusLabel, value.c_str());
+}
+
+std::wstring executableDirectory() {
+    std::array<wchar_t, MAX_PATH> buffer{};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length >= buffer.size()) return L".\\";
+    std::wstring path(buffer.data(), length);
+    const std::size_t separator = path.find_last_of(L"\\/");
+    if (separator == std::wstring::npos) return L".\\";
+    path.resize(separator + 1);
+    return path;
+}
+
+bool fileExists(const std::wstring& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+std::wstring settingsPath() {
+    const std::wstring exeDir = executableDirectory();
+    if (fileExists(exeDir + L"portable.flag")) return exeDir + L"Acrobat.ini";
+
+    std::array<wchar_t, MAX_PATH> appData{};
+    if (SHGetFolderPathW(nullptr, CSIDL_APPDATA | CSIDL_FLAG_CREATE, nullptr, SHGFP_TYPE_CURRENT,
+                         appData.data()) == S_OK) {
+        const std::wstring directory = std::wstring(appData.data()) + L"\\Acrobat";
+        CreateDirectoryW(directory.c_str(), nullptr);
+        return directory + L"\\settings.ini";
     }
+    return exeDir + L"Acrobat.ini";
+}
+
+int readInt(const wchar_t* section, const wchar_t* key, int fallback) {
+    return GetPrivateProfileIntW(section, key, fallback, g_iniPath.c_str());
+}
+
+std::wstring readString(const wchar_t* section, const wchar_t* key, const wchar_t* fallback) {
+    std::array<wchar_t, 1024> buffer{};
+    GetPrivateProfileStringW(section, key, fallback, buffer.data(),
+                             static_cast<DWORD>(buffer.size()), g_iniPath.c_str());
+    return buffer.data();
+}
+
+void writeInt(const wchar_t* section, const wchar_t* key, int value) {
+    wchar_t buffer[32]{};
+    swprintf_s(buffer, L"%d", value);
+    WritePrivateProfileStringW(section, key, buffer, g_iniPath.c_str());
+}
+
+void loadSettings() {
+    g_iniPath = settingsPath();
+    g_settings.pointerEnabled = readInt(L"General", L"PointerEnabled", 1) != 0;
+    g_settings.keepAwake = readInt(L"General", L"KeepAwake", 1) != 0;
+    g_settings.pauseOnBattery = readInt(L"General", L"PauseOnBattery", 1) != 0;
+    g_settings.distancePixels = std::clamp(readInt(L"Motion", L"DistancePixels", 120), 1, 1000);
+    g_settings.angleDegrees = std::clamp(readInt(L"Motion", L"AngleDegrees", -1), -1, 359);
+    g_settings.countdownMinutes = std::clamp(readInt(L"Duration", L"CountdownMinutes", 0), 0, 1440);
+    g_settings.autoExit = readInt(L"Duration", L"AutoExit", 0) != 0;
+    g_settings.scheduleEnabled = readInt(L"Schedule", L"Enabled", 0) != 0;
+    g_settings.daysMask = static_cast<unsigned int>(readInt(L"Schedule", L"DaysMask", 0x1F)) & 0x7F;
+    g_settings.startTime = readString(L"Schedule", L"Start", L"09:00");
+    g_settings.endTime = readString(L"Schedule", L"End", L"18:00");
+    g_settings.startupEnabled = readInt(L"General", L"Startup", 0) != 0;
+    g_settings.launchTarget = readInt(L"Automation", L"Enabled", 0) != 0;
+    g_settings.targetPath = readString(L"Automation", L"Target", L"");
+    g_settings.targetIntervalMinutes = std::clamp(readInt(L"Automation", L"IntervalMinutes", 0), 0, 60);
+}
+
+void saveSettings() {
+    if (g_iniPath.empty()) return;
+    writeInt(L"General", L"PointerEnabled", g_settings.pointerEnabled ? 1 : 0);
+    writeInt(L"General", L"KeepAwake", g_settings.keepAwake ? 1 : 0);
+    writeInt(L"General", L"PauseOnBattery", g_settings.pauseOnBattery ? 1 : 0);
+    writeInt(L"General", L"Startup", g_settings.startupEnabled ? 1 : 0);
+    writeInt(L"Motion", L"DistancePixels", g_settings.distancePixels);
+    writeInt(L"Motion", L"AngleDegrees", g_settings.angleDegrees);
+    writeInt(L"Duration", L"CountdownMinutes", g_settings.countdownMinutes);
+    writeInt(L"Duration", L"AutoExit", g_settings.autoExit ? 1 : 0);
+    writeInt(L"Schedule", L"Enabled", g_settings.scheduleEnabled ? 1 : 0);
+    writeInt(L"Schedule", L"DaysMask", static_cast<int>(g_settings.daysMask));
+    WritePrivateProfileStringW(L"Schedule", L"Start", g_settings.startTime.c_str(), g_iniPath.c_str());
+    WritePrivateProfileStringW(L"Schedule", L"End", g_settings.endTime.c_str(), g_iniPath.c_str());
+    writeInt(L"Automation", L"Enabled", g_settings.launchTarget ? 1 : 0);
+    WritePrivateProfileStringW(L"Automation", L"Target", g_settings.targetPath.c_str(), g_iniPath.c_str());
+    writeInt(L"Automation", L"IntervalMinutes", g_settings.targetIntervalMinutes);
+}
+
+bool updateStartupRegistration(bool enabled) {
+    HKEY key{};
+    const LONG openResult = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0,
+        KEY_SET_VALUE | KEY_QUERY_VALUE, nullptr, &key, nullptr);
+    if (openResult != ERROR_SUCCESS) return false;
+
+    LONG result = ERROR_SUCCESS;
+    if (enabled) {
+        const std::wstring command = L"\"" + executableDirectory() +
+            L"Acrobat.exe\" --minimized";
+        // Resolve the executable path independently of its containing directory.
+        std::array<wchar_t, MAX_PATH> exe{};
+        const DWORD length = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+        if (length == 0 || length >= exe.size()) {
+            RegCloseKey(key);
+            return false;
+        }
+        const std::wstring fullCommand = L"\"" + std::wstring(exe.data(), length) + L"\" --minimized";
+        result = RegSetValueExW(key, kRunValue, 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(fullCommand.c_str()),
+            static_cast<DWORD>((fullCommand.size() + 1) * sizeof(wchar_t)));
+    } else {
+        result = RegDeleteValueW(key, kRunValue);
+        if (result == ERROR_FILE_NOT_FOUND) result = ERROR_SUCCESS;
+    }
+    RegCloseKey(key);
+    return result == ERROR_SUCCESS;
+}
+
+void syncSettingsFromControls() {
+    g_settings.pointerEnabled = SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_settings.keepAwake = SendMessageW(g_powerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_settings.pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+
+    wchar_t text[64]{};
+    GetWindowTextW(g_distanceEdit, text, static_cast<int>(std::size(text)));
+    try { g_settings.distancePixels = std::clamp(std::stoi(text), 1, 1000); }
+    catch (...) { g_settings.distancePixels = 120; }
+
+    GetWindowTextW(g_angleEdit, text, static_cast<int>(std::size(text)));
+    try { g_settings.angleDegrees = std::clamp(std::stoi(text), -1, 359); }
+    catch (...) { g_settings.angleDegrees = -1; }
+
+    const LRESULT countdownIndex = SendMessageW(g_countdownCombo, CB_GETCURSEL, 0, 0);
+    const LRESULT countdownData = countdownIndex == CB_ERR ? 0 :
+        SendMessageW(g_countdownCombo, CB_GETITEMDATA, countdownIndex, 0);
+    g_settings.countdownMinutes = countdownData == CB_ERR ? 0 : static_cast<int>(countdownData);
+    g_settings.autoExit = SendMessageW(g_autoExitCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+
+    g_settings.scheduleEnabled = SendMessageW(g_scheduleCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_settings.daysMask = 0;
+    for (int index = 0; index < 7; ++index) {
+        if (SendMessageW(g_dayChecks[index], BM_GETCHECK, 0, 0) == BST_CHECKED)
+            g_settings.daysMask |= (1u << index);
+    }
+    wchar_t timeBuffer[16]{};
+    GetWindowTextW(g_startTimeEdit, timeBuffer, static_cast<int>(std::size(timeBuffer)));
+    g_settings.startTime = timeBuffer;
+    GetWindowTextW(g_endTimeEdit, timeBuffer, static_cast<int>(std::size(timeBuffer)));
+    g_settings.endTime = timeBuffer;
+    g_settings.startupEnabled = SendMessageW(g_startupCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_settings.launchTarget = SendMessageW(g_launchTargetCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    std::array<wchar_t, 1024> target{};
+    GetWindowTextW(g_targetPathEdit, target.data(), static_cast<int>(target.size()));
+    g_settings.targetPath = target.data();
+
+    const LRESULT intervalIndex = SendMessageW(g_targetIntervalCombo, CB_GETCURSEL, 0, 0);
+    const LRESULT intervalData = intervalIndex == CB_ERR ? 0 :
+        SendMessageW(g_targetIntervalCombo, CB_GETITEMDATA, intervalIndex, 0);
+    g_settings.targetIntervalMinutes = intervalData == CB_ERR ? 0 : static_cast<int>(intervalData);
+}
+
+void populateControlsFromSettings() {
+    SendMessageW(g_pointerCheck, BM_SETCHECK, g_settings.pointerEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_powerCheck, BM_SETCHECK, g_settings.keepAwake ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_batteryCheck, BM_SETCHECK, g_settings.pauseOnBattery ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    wchar_t number[32]{};
+    swprintf_s(number, L"%d", g_settings.distancePixels);
+    SetWindowTextW(g_distanceEdit, number);
+    swprintf_s(number, L"%d", g_settings.angleDegrees);
+    SetWindowTextW(g_angleEdit, number);
+
+    const std::array<int, 5> countdownValues{0, 30, 60, 120, 240};
+    int selected = 0;
+    for (std::size_t index = 0; index < countdownValues.size(); ++index) {
+        if (countdownValues[index] == g_settings.countdownMinutes) selected = static_cast<int>(index);
+    }
+    SendMessageW(g_countdownCombo, CB_SETCURSEL, selected, 0);
+    SendMessageW(g_autoExitCheck, BM_SETCHECK, g_settings.autoExit ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    SendMessageW(g_scheduleCheck, BM_SETCHECK, g_settings.scheduleEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    for (int index = 0; index < 7; ++index) {
+        SendMessageW(g_dayChecks[index], BM_SETCHECK,
+            (g_settings.daysMask & (1u << index)) ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    SetWindowTextW(g_startTimeEdit, g_settings.startTime.c_str());
+    SetWindowTextW(g_endTimeEdit, g_settings.endTime.c_str());
+    SendMessageW(g_startupCheck, BM_SETCHECK, g_settings.startupEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_launchTargetCheck, BM_SETCHECK, g_settings.launchTarget ? BST_CHECKED : BST_UNCHECKED, 0);
+    SetWindowTextW(g_targetPathEdit, g_settings.targetPath.c_str());
+
+    const std::array<int, 4> intervals{0, 5, 15, 30};
+    selected = 0;
+    for (std::size_t index = 0; index < intervals.size(); ++index) {
+        if (intervals[index] == g_settings.targetIntervalMinutes) selected = static_cast<int>(index);
+    }
+    SendMessageW(g_targetIntervalCombo, CB_SETCURSEL, selected, 0);
+}
+
+bool parseTime(const std::wstring& value, int& minutes) {
+    if (value.size() != 5 || value[2] != L':') return false;
+    if (value[0] < L'0' || value[0] > L'9' || value[1] < L'0' || value[1] > L'9' ||
+        value[3] < L'0' || value[3] > L'9' || value[4] < L'0' || value[4] > L'9') return false;
+    const int hour = (value[0] - L'0') * 10 + (value[1] - L'0');
+    const int minute = (value[3] - L'0') * 10 + (value[4] - L'0');
+    if (hour > 23 || minute > 59) return false;
+    minutes = hour * 60 + minute;
+    return true;
+}
+
+bool isScheduleActive(const SYSTEMTIME& now) {
+    int startMinute{}, endMinute{};
+    if (!parseTime(g_settings.startTime, startMinute) ||
+        !parseTime(g_settings.endTime, endMinute) || startMinute == endMinute) return false;
+
+    const int currentMinute = static_cast<int>(now.wHour) * 60 + now.wMinute;
+    const int day = static_cast<int>(now.wDayOfWeek); // Sunday=0
+    const int previousDay = (day + 6) % 7;
+
+    if (startMinute < endMinute) {
+        return (g_settings.daysMask & (1u << day)) != 0 &&
+            currentMinute >= startMinute && currentMinute < endMinute;
+    }
+    if (currentMinute >= startMinute) {
+        return (g_settings.daysMask & (1u << day)) != 0;
+    }
+    if (currentMinute < endMinute) {
+        return (g_settings.daysMask & (1u << previousDay)) != 0;
+    }
+    return false;
+}
+
+void showPage(int page) {
+    for (HWND control : g_generalControls) ShowWindow(control, page == 0 ? SW_SHOW : SW_HIDE);
+    for (HWND control : g_scheduleControls) ShowWindow(control, page == 1 ? SW_SHOW : SW_HIDE);
+}
+
+void setControlFont(HWND control, HFONT font) {
+    if (control != nullptr) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+}
+
+HWND createPageControl(int page, const wchar_t* cls, const wchar_t* text, DWORD style,
+                       int x, int y, int width, int height, int id) {
+    HWND control = CreateWindowExW(
+        0, cls, text, WS_CHILD | style, x, y, width, height,
+        g_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+        GetModuleHandleW(nullptr), nullptr
+    );
+    setControlFont(control, g_regularFont);
+    if (page == 0) g_generalControls.push_back(control);
+    else g_scheduleControls.push_back(control);
+    return control;
+}
+
+void setEnabledState() {
+    if (g_startButton) EnableWindow(g_startButton, !g_running);
+    if (g_stopButton) EnableWindow(g_stopButton, g_running);
+    for (HWND control : g_generalControls) {
+        const int id = GetDlgCtrlID(control);
+        if (id != IdStart && id != IdStop) EnableWindow(control, !g_running);
+    }
+}
+
+void createControls(HWND window) {
+    g_regularFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    g_titleFont = CreateFontW(-22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
+    HWND title = CreateWindowW(L"STATIC", L"Acrobat", WS_CHILD | WS_VISIBLE,
+        22, 16, 220, 30, window, nullptr, nullptr, nullptr);
+    HWND subtitle = CreateWindowW(L"STATIC", L"Pointer control  •  Session power management",
+        WS_CHILD | WS_VISIBLE, 24, 48, 340, 22, window, nullptr, nullptr, nullptr);
+    setControlFont(title, g_titleFont);
+    setControlFont(subtitle, g_regularFont);
+
+    g_startButton = CreateWindowW(L"BUTTON", L"Start session",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        350, 19, 118, 32, window, reinterpret_cast<HMENU>(IdStart), nullptr, nullptr);
+    g_stopButton = CreateWindowW(L"BUTTON", L"Stop",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        476, 19, 58, 32, window, reinterpret_cast<HMENU>(IdStop), nullptr, nullptr);
+    setControlFont(g_startButton, g_regularFont);
+    setControlFont(g_stopButton, g_regularFont);
+    EnableWindow(g_stopButton, FALSE);
+
+    g_tabs = CreateWindowExW(0, WC_TABCONTROLW, L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_TABS,
+        18, 82, 516, 300, window, reinterpret_cast<HMENU>(IdTabs), nullptr, nullptr);
+    setControlFont(g_tabs, g_regularFont);
+    TCITEMW tab{};
+    tab.mask = TCIF_TEXT;
+    tab.pszText = const_cast<LPWSTR>(L"Session");
+    TabCtrl_InsertItem(g_tabs, 0, &tab);
+    tab.pszText = const_cast<LPWSTR>(L"Schedule & Automation");
+    TabCtrl_InsertItem(g_tabs, 1, &tab);
+
+    g_pointerCheck = createPageControl(0, L"BUTTON", L"Enable pointer movement",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 122, 205, 24, IdPointer);
+    g_powerCheck = createPageControl(0, L"BUTTON", L"Keep display and system awake",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 264, 122, 235, 24, IdPower);
+    g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause pointer activity on battery",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 153, 250, 24, IdBattery);
+
+    createPageControl(0, L"STATIC", L"Travel distance (px)", SS_LEFT,
+        34, 197, 132, 22, 0);
+    g_distanceEdit = createPageControl(0, L"EDIT", L"120",
+        WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_AUTOHSCROLL, 164, 194, 62, 25, IdDistance);
+    createPageControl(0, L"STATIC", L"Angle (-1 = random)", SS_LEFT,
+        264, 197, 138, 22, 0);
+    g_angleEdit = createPageControl(0, L"EDIT", L"-1",
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 406, 194, 54, 25, IdAngle);
+
+    createPageControl(0, L"STATIC", L"Session countdown", SS_LEFT,
+        34, 253, 132, 22, 0);
+    g_countdownCombo = createPageControl(0, WC_COMBOBOXW, L"",
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 164, 249, 126, 120, IdCountdown);
+    const std::array<std::pair<const wchar_t*, int>, 5> countdownItems{{
+        {L"No limit", 0}, {L"30 minutes", 30}, {L"1 hour", 60},
+        {L"2 hours", 120}, {L"4 hours", 240}
+    }};
+    for (const auto& item : countdownItems) {
+        const LRESULT index = SendMessageW(g_countdownCombo, CB_ADDSTRING, 0,
+            reinterpret_cast<LPARAM>(item.first));
+        SendMessageW(g_countdownCombo, CB_SETITEMDATA, index, item.second);
+    }
+    g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit app when finished",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 312, 251, 180, 24, IdAutoExit);
+    createPageControl(0, L"STATIC",
+        L"Physical input pauses pointer movement; Ctrl+Shift+J toggles the session.",
+        SS_LEFT, 34, 302, 460, 34, 0);
+
+    g_scheduleCheck = createPageControl(1, L"BUTTON", L"Enable weekly schedule",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 119, 220, 24, IdSchedule);
+    createPageControl(1, L"STATIC", L"Active days", SS_LEFT, 34, 153, 100, 20, 0);
+    const std::array<const wchar_t*, 7> dayNames{
+        L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fri", L"Sat"
+    };
+    for (int index = 0; index < 7; ++index) {
+        g_dayChecks[index] = createPageControl(1, L"BUTTON", dayNames[index],
+            WS_TABSTOP | BS_AUTOCHECKBOX, 34 + index * 65, 176, 58, 22, IdDayMonday + index);
+    }
+    createPageControl(1, L"STATIC", L"Start (HH:MM)", SS_LEFT, 34, 216, 100, 22, 0);
+    g_startTimeEdit = createPageControl(1, L"EDIT", L"09:00",
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 136, 212, 72, 25, IdStartTime);
+    createPageControl(1, L"STATIC", L"End (HH:MM)", SS_LEFT, 244, 216, 88, 22, 0);
+    g_endTimeEdit = createPageControl(1, L"EDIT", L"18:00",
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 332, 212, 72, 25, IdEndTime);
+    g_startupCheck = createPageControl(1, L"BUTTON", L"Start with Windows (minimized)",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 251, 245, 24, IdStartup);
+    g_launchTargetCheck = createPageControl(1, L"BUTTON", L"Open target on session start",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 34, 282, 220, 24, IdLaunchTarget);
+    g_targetPathEdit = createPageControl(1, L"EDIT", L"",
+        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 254, 280, 238, 25, IdTargetPath);
+    createPageControl(1, L"STATIC", L"Repeat", SS_LEFT, 34, 318, 54, 22, 0);
+    g_targetIntervalCombo = createPageControl(1, WC_COMBOBOXW, L"",
+        WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 92, 314, 116, 100, IdTargetInterval);
+    const std::array<std::pair<const wchar_t*, int>, 4> intervalItems{{
+        {L"On start only", 0}, {L"Every 5 min", 5},
+        {L"Every 15 min", 15}, {L"Every 30 min", 30}
+    }};
+    for (const auto& item : intervalItems) {
+        const LRESULT index = SendMessageW(g_targetIntervalCombo, CB_ADDSTRING, 0,
+            reinterpret_cast<LPARAM>(item.first));
+        SendMessageW(g_targetIntervalCombo, CB_SETITEMDATA, index, item.second);
+    }
+
+    g_statusLabel = CreateWindowW(L"STATIC", L"Stopped",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 24, 392, 492, 24,
+        window, reinterpret_cast<HMENU>(IdStatus), nullptr, nullptr);
+    setControlFont(g_statusLabel, g_regularFont);
+    populateControlsFromSettings();
+    showPage(0);
 }
 
 void releasePowerRequest() {
@@ -75,15 +509,13 @@ void releasePowerRequest() {
 }
 
 bool applyPowerRequest() {
-    if (!g_keepAwake) {
+    if (!g_settings.keepAwake) {
         releasePowerRequest();
         return true;
     }
-
     g_powerRequestAttempted = true;
     const EXECUTION_STATE result = SetThreadExecutionState(
-        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-    );
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
     g_powerRequestActive = result != 0;
     return g_powerRequestActive;
 }
@@ -94,47 +526,81 @@ void abortPath() {
     g_nextPathStepAt = 0;
 }
 
-void stopSession() {
-    g_running = false;
-    g_nextActionAt = 0;
-    abortPath();
-    releasePowerRequest();
-    setStatus(L"Stopped");
-    if (g_startButton != nullptr) EnableWindow(g_startButton, TRUE);
-    if (g_stopButton != nullptr) EnableWindow(g_stopButton, FALSE);
-    if (g_pointerCheck != nullptr) EnableWindow(g_pointerCheck, TRUE);
-    if (g_powerCheck != nullptr) EnableWindow(g_powerCheck, TRUE);
-    if (g_batteryCheck != nullptr) EnableWindow(g_batteryCheck, TRUE);
+void launchConfiguredTarget() {
+    if (!g_settings.launchTarget || g_settings.targetPath.empty()) return;
+    const HINSTANCE result = ShellExecuteW(g_window, L"open", g_settings.targetPath.c_str(),
+        nullptr, nullptr, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32) {
+        setStatus(L"Session active; target could not be opened");
+    }
 }
 
-void startSession() {
+void runTargetIfDue(ULONGLONG now) {
+    if (!g_running || !g_settings.launchTarget || g_settings.targetPath.empty()) return;
+    if (g_nextTargetLaunchAt == 0) {
+        launchConfiguredTarget();
+        g_nextTargetLaunchAt = now + static_cast<ULONGLONG>(
+            std::max(1, g_settings.targetIntervalMinutes)) * 60ULL * 1000ULL;
+        return;
+    }
+    if (g_settings.targetIntervalMinutes > 0 && now >= g_nextTargetLaunchAt) {
+        launchConfiguredTarget();
+        g_nextTargetLaunchAt = now +
+            static_cast<ULONGLONG>(g_settings.targetIntervalMinutes) * 60ULL * 1000ULL;
+    }
+}
+
+void stopSession(bool fromSchedule = false) {
+    g_running = false;
+    g_startedBySchedule = false;
+    g_nextActionAt = 0;
+    g_countdownDeadline = 0;
+    g_nextTargetLaunchAt = 0;
+    abortPath();
+    releasePowerRequest();
+    setStatus(fromSchedule ? L"Schedule window ended; session stopped" : L"Stopped");
+    setEnabledState();
+}
+
+void startSession(bool fromSchedule = false) {
     if (g_running) return;
+    syncSettingsFromControls();
 
-    g_pointerMotion = SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    g_keepAwake = SendMessageW(g_powerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    g_pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-
-    if (g_pointerMotion && !g_inputMonitoringReady) {
-        setStatus(L"Cannot start pointer movement; physical input monitoring is unavailable");
+    if (g_settings.pointerEnabled && !g_inputMonitoringReady) {
+        setStatus(L"Cannot start: physical input monitoring is unavailable");
+        return;
+    }
+    if (!g_settings.pointerEnabled && !g_settings.keepAwake) {
+        setStatus(L"Select pointer movement or Windows power protection first");
         return;
     }
 
     g_running = true;
+    g_startedBySchedule = fromSchedule;
     g_lastPhysicalInput = GetTickCount64();
     g_nextActionAt = 0;
+    g_countdownDeadline = g_settings.countdownMinutes > 0
+        ? g_lastPhysicalInput + static_cast<ULONGLONG>(g_settings.countdownMinutes) * 60ULL * 1000ULL
+        : 0;
+    g_nextTargetLaunchAt = 0;
     abortPath();
 
-    if (!applyPowerRequest() && g_keepAwake) {
-        setStatus(L"Running; Windows power request could not be applied");
+    const bool powerOk = applyPowerRequest();
+    if (!powerOk && g_settings.keepAwake) {
+        setStatus(L"Session active; Windows power request failed");
     } else {
-        setStatus(L"Running; waiting for an idle input period");
+        setStatus(fromSchedule ? L"Started by weekly schedule" : L"Session active");
     }
-
-    EnableWindow(g_startButton, FALSE);
-    EnableWindow(g_stopButton, TRUE);
-    EnableWindow(g_pointerCheck, FALSE);
-    EnableWindow(g_powerCheck, FALSE);
-    EnableWindow(g_batteryCheck, FALSE);
+    setEnabledState();
+    saveSettings();
+    if (g_settings.startupEnabled && !updateStartupRegistration(true)) {
+        setStatus(L"Session active; Windows startup registration failed");
+    }
+    launchConfiguredTarget();
+    if (g_settings.targetIntervalMinutes > 0) {
+        g_nextTargetLaunchAt = GetTickCount64() +
+            static_cast<ULONGLONG>(g_settings.targetIntervalMinutes) * 60ULL * 1000ULL;
+    }
 }
 
 void toggleSession() {
@@ -149,18 +615,15 @@ INPUT makeAbsoluteMove(deskawake::Point point) {
     const int height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
     const double xRange = static_cast<double>(std::max(1, width - 1));
     const double yRange = static_cast<double>(std::max(1, height - 1));
-
     const int pixelX = std::clamp(static_cast<int>(std::lround(point.x)), left, left + width - 1);
     const int pixelY = std::clamp(static_cast<int>(std::lround(point.y)), top, top + height - 1);
 
     INPUT input{};
     input.type = INPUT_MOUSE;
     input.mi.dx = static_cast<LONG>(std::lround(
-        (static_cast<double>(pixelX - left) * 65535.0) / xRange
-    ));
+        static_cast<double>(pixelX - left) * 65535.0 / xRange));
     input.mi.dy = static_cast<LONG>(std::lround(
-        (static_cast<double>(pixelY - top) * 65535.0) / yRange
-    ));
+        static_cast<double>(pixelY - top) * 65535.0 / yRange));
     input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
     return input;
 }
@@ -173,23 +636,29 @@ bool sendAbsoluteMove(deskawake::Point point) {
 bool sendMicroMove() {
     POINT current{};
     if (!GetCursorPos(&current)) return false;
-
     const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int right = left + std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN)) - 1;
     const int bottom = top + std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN)) - 1;
+    std::uniform_int_distribution<int> delta(-1, 1);
 
-    POINT offset = current;
-    if (current.x < right) ++offset.x;
-    else if (current.x > left) --offset.x;
-    else if (current.y < bottom) ++offset.y;
-    else if (current.y > top) --offset.y;
-    else return false;
+    POINT offset{};
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const int dx = delta(g_random);
+        const int dy = delta(g_random);
+        if (dx == 0 && dy == 0) continue;
+        offset.x = std::clamp(current.x + dx, left, right);
+        offset.y = std::clamp(current.y + dy, top, bottom);
+        if (offset.x != current.x || offset.y != current.y) break;
+    }
+    if (offset.x == current.x && offset.y == current.y) return false;
 
     INPUT inputs[2]{};
     inputs[0] = makeAbsoluteMove({static_cast<double>(offset.x), static_cast<double>(offset.y)});
     inputs[1] = makeAbsoluteMove({static_cast<double>(current.x), static_cast<double>(current.y)});
-    return SendInput(2, inputs, sizeof(INPUT)) == 2;
+    const UINT sent = SendInput(2, inputs, sizeof(INPUT));
+    if (sent != 2) SetCursorPos(current.x, current.y);
+    return sent == 2;
 }
 
 bool beginHumanPath() {
@@ -200,35 +669,32 @@ bool beginHumanPath() {
     const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const int width = std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
     const int height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
-    const int marginX = std::min(12, width / 4);
-    const int marginY = std::min(12, height / 4);
+    const double distance = static_cast<double>(g_settings.distancePixels);
+    double angleDegrees = static_cast<double>(g_settings.angleDegrees);
+    if (g_settings.angleDegrees < 0) {
+        std::uniform_real_distribution<double> randomAngle(0.0, 360.0);
+        angleDegrees = randomAngle(g_random);
+    }
+    constexpr double kPi = 3.14159265358979323846;
+    const double angle = angleDegrees * kPi / 180.0;
 
-    std::uniform_real_distribution<double> angleDistribution(0.0, 6.283185307179586);
-    std::uniform_real_distribution<double> distanceDistribution(70.0, 210.0);
-    const double angle = angleDistribution(g_random);
-    const double distance = distanceDistribution(g_random);
-
-    const int minX = left + marginX;
-    const int maxX = left + width - 1 - marginX;
-    const int minY = top + marginY;
-    const int maxY = top + height - 1 - marginY;
-
+    const int minX = left + std::min(12, width / 4);
+    const int maxX = left + width - 1 - std::min(12, width / 4);
+    const int minY = top + std::min(12, height / 4);
+    const int maxY = top + height - 1 - std::min(12, height / 4);
     const deskawake::Point start{static_cast<double>(current.x), static_cast<double>(current.y)};
     const deskawake::Point target{
-        static_cast<double>(std::clamp(
-            static_cast<int>(std::lround(current.x + std::cos(angle) * distance)), minX, maxX)),
-        static_cast<double>(std::clamp(
-            static_cast<int>(std::lround(current.y + std::sin(angle) * distance)), minY, maxY))
+        static_cast<double>(std::clamp(static_cast<int>(std::lround(current.x + std::cos(angle) * distance)), minX, maxX)),
+        static_cast<double>(std::clamp(static_cast<int>(std::lround(current.y + std::sin(angle) * distance)), minY, maxY))
     };
-
     if (std::abs(target.x - start.x) < 1.0 && std::abs(target.y - start.y) < 1.0) return false;
 
     deskawake::TrajectoryOptions options{};
     options.sample_count = 28;
     options.overshoot_fraction = 0.035;
-    options.tremor_pixels = 0.35;
+    options.perlin_amplitude_pixels = 0.35;
+    options.gaussian_sigma_pixels = 0.18;
     options.seed = g_random();
-
     g_activePath = deskawake::generateHumanTrajectory(start, target, options);
     g_activePathIndex = 1;
     g_nextPathStepAt = GetTickCount64();
@@ -239,17 +705,24 @@ void finishPath() {
     abortPath();
     g_nextActionAt = GetTickCount64() +
         static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
-    setStatus(L"Running; pointer route completed");
+    setStatus(L"Session active; pointer route completed");
 }
 
 void updateRunningState() {
     if (!g_running) return;
-
     const ULONGLONG now = GetTickCount64();
+
+    if (g_countdownDeadline != 0 && now >= g_countdownDeadline) {
+        const bool exitAfterStop = g_settings.autoExit;
+        stopSession();
+        setStatus(exitAfterStop ? L"Countdown finished; exiting" : L"Countdown finished; session stopped");
+        if (exitAfterStop && g_window != nullptr) DestroyWindow(g_window);
+        return;
+    }
+
     SYSTEM_POWER_STATUS powerStatus{};
     const bool onBattery = GetSystemPowerStatus(&powerStatus) && powerStatus.ACLineStatus == 0;
-
-    if (g_pauseOnBattery && onBattery) {
+    if (g_settings.pauseOnBattery && onBattery) {
         abortPath();
         g_nextActionAt = 0;
         releasePowerRequest();
@@ -257,27 +730,35 @@ void updateRunningState() {
         return;
     }
 
-    if (g_keepAwake && !g_powerRequestActive && !g_powerRequestAttempted) {
+    if (g_settings.keepAwake && !g_powerRequestActive && !g_powerRequestAttempted) {
         applyPowerRequest();
-    } else if (!g_keepAwake) {
+    } else if (!g_settings.keepAwake) {
         releasePowerRequest();
+    }
+
+    runTargetIfDue(now);
+
+    if (!g_settings.pointerEnabled) {
+        if (now - g_lastStatusUpdate >= 1000) {
+            g_lastStatusUpdate = now;
+            setStatus(L"Session active; Windows power protection only");
+        }
+        return;
     }
 
     if (now - g_lastPhysicalInput < kQuietPeriodMs) {
         abortPath();
         g_nextActionAt = 0;
-        setStatus(L"Paused; physical keyboard or mouse activity detected");
+        setStatus(L"Paused; physical input detected");
         return;
     }
 
     if (!g_activePath.empty()) {
         if (now < g_nextPathStepAt) return;
-
         if (g_activePathIndex >= g_activePath.size()) {
             finishPath();
             return;
         }
-
         const deskawake::Point point = g_activePath[g_activePathIndex];
         if (!sendAbsoluteMove(point)) {
             abortPath();
@@ -286,7 +767,6 @@ void updateRunningState() {
             setStatus(L"Pointer route stopped; Windows rejected an input event");
             return;
         }
-
         ++g_activePathIndex;
         g_nextPathStepAt = now + 12;
         return;
@@ -296,54 +776,64 @@ void updateRunningState() {
         g_nextActionAt = now +
             static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
     }
-
     if (now >= g_nextActionAt) {
-        if (!g_pointerMotion) {
-            g_nextActionAt = now +
-                static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
-            setStatus(L"Running; Windows power protection only");
-            return;
-        }
-
-        const deskawake::ActionKind action = g_scheduler.nextAction();
-        if (action == deskawake::ActionKind::Micro) {
+        if (g_scheduler.nextAction() == deskawake::ActionKind::Micro) {
             const bool moved = sendMicroMove();
             g_nextActionAt = now +
                 static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
-            setStatus(moved ? L"Running; micro movement completed"
-                            : L"Running; micro movement unavailable at this screen position");
+            setStatus(moved ? L"Session active; micro movement completed"
+                            : L"Session active; micro movement unavailable");
         } else if (!beginHumanPath()) {
             g_nextActionAt = now +
                 static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
-            setStatus(L"Running; could not create a pointer route");
+            setStatus(L"Session active; could not create pointer route");
         } else {
-            setStatus(L"Running; pointer route in progress");
+            setStatus(L"Session active; pointer route in progress");
         }
         return;
     }
 
-    if (now - g_lastStatusUpdate >= 500) {
+    if (now - g_lastStatusUpdate >= 1000) {
         g_lastStatusUpdate = now;
-        const ULONGLONG remainingMs = g_nextActionAt > now ? g_nextActionAt - now : 0;
-        const unsigned long seconds = static_cast<unsigned long>((remainingMs + 999) / 1000);
-        wchar_t buffer[160]{};
-        swprintf_s(buffer, L"Running; next scheduled action in %lu seconds", seconds);
-        setStatus(buffer);
+        const ULONGLONG remaining = g_nextActionAt > now ? g_nextActionAt - now : 0;
+        wchar_t status[160]{};
+        swprintf_s(status, L"Session active  •  next movement in %lu sec",
+            static_cast<unsigned long>((remaining + 999) / 1000));
+        setStatus(status);
+    }
+}
+
+void updateSchedule() {
+    SYSTEMTIME local{};
+    GetLocalTime(&local);
+    const bool active = g_settings.scheduleEnabled && isScheduleActive(local);
+    if (!g_scheduleStateKnown || active != g_lastScheduleActive) {
+        g_scheduleStateKnown = true;
+        g_lastScheduleActive = active;
+        if (active && !g_running) {
+            startSession(true);
+        } else if (!active && g_running && g_startedBySchedule) {
+            stopSession(true);
+        }
     }
 }
 
 void addTrayIcon() {
     if (g_trayAdded || g_window == nullptr) return;
-
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);
     data.hWnd = g_window;
     data.uID = 1;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayMessage;
-    data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wcscpy_s(data.szTip, L"DeskAwake");
+    data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    if (data.hIcon == nullptr) data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wcscpy_s(data.szTip, L"Acrobat");
     g_trayAdded = Shell_NotifyIconW(NIM_ADD, &data) == TRUE;
+    if (g_trayAdded) {
+        data.uVersion = NOTIFYICON_VERSION_4;
+        Shell_NotifyIconW(NIM_SETVERSION, &data);
+    }
 }
 
 void removeTrayIcon() {
@@ -359,65 +849,41 @@ void removeTrayIcon() {
 void showTrayMenu() {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) return;
-
-    AppendMenuW(menu, MF_STRING, kIdTrayShow, L"Show DeskAwake");
-    AppendMenuW(menu, MF_STRING, kIdTrayToggle, g_running ? L"Stop" : L"Start");
+    AppendMenuW(menu, MF_STRING, IdTrayShow, L"Open Acrobat");
+    AppendMenuW(menu, MF_STRING, IdTrayToggle, g_running ? L"Stop session" : L"Start session");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kIdTrayExit, L"Exit");
-
+    AppendMenuW(menu, MF_STRING, IdTrayExit, L"Exit");
     POINT point{};
     GetCursorPos(&point);
     SetForegroundWindow(g_window);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, g_window, nullptr);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, point.x, point.y, 0, g_window, nullptr);
+    PostMessageW(g_window, WM_NULL, 0, 0);
     DestroyMenu(menu);
 }
 
-void createControls(HWND window) {
-    const HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    g_startButton = CreateWindowW(L"BUTTON", L"Start",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        24, 24, 112, 32, window, reinterpret_cast<HMENU>(kIdStart), nullptr, nullptr);
-    g_stopButton = CreateWindowW(L"BUTTON", L"Stop",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        148, 24, 112, 32, window, reinterpret_cast<HMENU>(kIdStop), nullptr, nullptr);
-    g_pointerCheck = CreateWindowW(L"BUTTON", L"Enable pointer movement",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-        24, 82, 300, 24, window, reinterpret_cast<HMENU>(kIdPointer), nullptr, nullptr);
-    g_powerCheck = CreateWindowW(L"BUTTON", L"Keep display and system awake",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-        24, 112, 320, 24, window, reinterpret_cast<HMENU>(kIdPower), nullptr, nullptr);
-    g_batteryCheck = CreateWindowW(L"BUTTON", L"Pause when running on battery",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-        24, 142, 320, 24, window, reinterpret_cast<HMENU>(kIdBattery), nullptr, nullptr);
-    g_statusLabel = CreateWindowW(L"STATIC", L"Stopped",
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        24, 190, 410, 36, window, reinterpret_cast<HMENU>(kIdStatus), nullptr, nullptr);
-
-    for (HWND control : {g_startButton, g_stopButton, g_pointerCheck,
-                         g_powerCheck, g_batteryCheck, g_statusLabel}) {
-        if (control != nullptr) {
-            SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-        }
-    }
-
-    SendMessageW(g_pointerCheck, BM_SETCHECK, BST_CHECKED, 0);
-    SendMessageW(g_powerCheck, BM_SETCHECK, BST_CHECKED, 0);
-    SendMessageW(g_batteryCheck, BM_SETCHECK, BST_CHECKED, 0);
-    EnableWindow(g_stopButton, FALSE);
+void showOrHidePageControls(bool showGeneral) {
+    showPage(showGeneral ? 0 : 1);
 }
 
 LRESULT CALLBACK mouseHookProc(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION && g_window != nullptr) {
+    if (code == HC_ACTION && g_window != nullptr && wParam == WM_MOUSEMOVE) {
         const auto* data = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
         if ((data->flags & LLMHF_INJECTED) == 0) {
-            PostMessageW(g_window, kUserActivityMessage, 0, 0);
+            static ULONGLONG lastPosted{};
+            const ULONGLONG now = GetTickCount64();
+            if (now - lastPosted >= 25) {
+                lastPosted = now;
+                PostMessageW(g_window, kUserActivityMessage, 0, 0);
+            }
         }
     }
     return CallNextHookEx(g_mouseHook, code, wParam, lParam);
 }
 
 LRESULT CALLBACK keyboardHookProc(int code, WPARAM wParam, LPARAM lParam) {
-    if (code == HC_ACTION && g_window != nullptr) {
+    if (code == HC_ACTION && g_window != nullptr &&
+        (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN ||
+         wParam == WM_KEYUP || wParam == WM_SYSKEYUP)) {
         const auto* data = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
         if ((data->flags & LLKHF_INJECTED) == 0) {
             PostMessageW(g_window, kUserActivityMessage, 0, 0);
@@ -444,40 +910,69 @@ void removeHooks() {
     }
 }
 
+void saveFromUi() {
+    syncSettingsFromControls();
+    saveSettings();
+    if (!updateStartupRegistration(g_settings.startupEnabled)) {
+        setStatus(L"Settings saved; could not update Windows startup registration");
+    }
+}
+
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE:
+        g_backgroundBrush = CreateSolidBrush(RGB(246, 248, 251));
         createControls(window);
         g_lastPhysicalInput = GetTickCount64();
-        SetTimer(window, kTimerId, kTimerPeriodMs, nullptr);
-        RegisterHotKey(window, kHotkeyId, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'J');
+        SetTimer(window, kEngineTimerId, kEngineTimerMs, nullptr);
+        SetTimer(window, kScheduleTimerId, 1000, nullptr);
+        if (!RegisterHotKey(window, kHotkeyId, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 'J')) {
+            setStatus(L"Ctrl+Shift+J is unavailable; use the Start/Stop buttons");
+        }
         g_inputMonitoringReady = installHooks();
         if (!g_inputMonitoringReady) {
-            setStatus(L"Input monitoring unavailable; pointer movement will remain disabled");
+            setStatus(L"Input monitoring unavailable; pointer mode cannot start");
         }
+        updateSchedule();
         return 0;
 
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
-        case kIdStart:
+        case IdStart:
             startSession();
             return 0;
-        case kIdStop:
+        case IdStop:
             stopSession();
             return 0;
-        case kIdTrayShow:
+        case IdTrayShow:
             ShowWindow(window, SW_SHOW);
             SetForegroundWindow(window);
             return 0;
-        case kIdTrayToggle:
+        case IdTrayToggle:
             toggleSession();
             return 0;
-        case kIdTrayExit:
+        case IdTrayExit:
+            saveFromUi();
             removeTrayIcon();
             DestroyWindow(window);
             return 0;
         default:
             break;
+        }
+        if (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE ||
+            HIWORD(wParam) == EN_KILLFOCUS) {
+            saveFromUi();
+            if (LOWORD(wParam) == IdStartup && g_settings.startupEnabled) {
+                setStatus(L"Windows startup enabled");
+            }
+        }
+        break;
+
+    case WM_NOTIFY:
+        if (reinterpret_cast<NMHDR*>(lParam)->idFrom == IdTabs &&
+            reinterpret_cast<NMHDR*>(lParam)->code == TCN_SELCHANGE) {
+            showOrHidePageControls(TabCtrl_GetCurSel(g_tabs) == 0);
+            return 0;
         }
         break;
 
@@ -492,12 +987,19 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         g_lastPhysicalInput = GetTickCount64();
         g_nextActionAt = 0;
         abortPath();
-        if (g_running) setStatus(L"Paused; waiting for physical input to stop");
+        if (g_running && g_settings.pointerEnabled) {
+            setStatus(L"Paused; waiting for physical input to stop");
+        }
         return 0;
 
     case WM_TIMER:
-        if (wParam == kTimerId) {
+        if (wParam == kEngineTimerId) {
             updateRunningState();
+            return 0;
+        }
+        if (wParam == kScheduleTimerId) {
+            saveFromUi();
+            updateSchedule();
             return 0;
         }
         break;
@@ -523,30 +1025,55 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         break;
 
     case WM_CLOSE:
+        saveFromUi();
         addTrayIcon();
         ShowWindow(window, SW_HIDE);
         return 0;
 
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(37, 47, 61));
+        return reinterpret_cast<LRESULT>(g_backgroundBrush);
+    }
+
+    case WM_ERASEBKGND: {
+        RECT rect{};
+        GetClientRect(window, &rect);
+        FillRect(reinterpret_cast<HDC>(wParam), &rect, g_backgroundBrush);
+        return 1;
+    }
+
     case WM_DESTROY:
+        saveFromUi();
         stopSession();
         removeHooks();
         removeTrayIcon();
         UnregisterHotKey(window, kHotkeyId);
-        KillTimer(window, kTimerId);
+        KillTimer(window, kEngineTimerId);
+        KillTimer(window, kScheduleTimerId);
+        if (g_regularFont) DeleteObject(g_regularFont);
+        if (g_titleFont) DeleteObject(g_titleFont);
+        if (g_backgroundBrush) DeleteObject(g_backgroundBrush);
         PostQuitMessage(0);
         return 0;
 
     default:
         break;
     }
-
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    loadSettings();
+
+    INITCOMMONCONTROLSEX controls{};
+    controls.dwSize = sizeof(controls);
+    controls.dwICC = ICC_TAB_CLASSES;
+    InitCommonControlsEx(&controls);
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -557,19 +1084,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     windowClass.hIconSm = windowClass.hIcon;
     windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     windowClass.lpszClassName = kWindowClass;
-
     if (RegisterClassExW(&windowClass) == 0) return static_cast<int>(GetLastError());
 
     g_window = CreateWindowExW(
-        0, kWindowClass, kWindowTitle,
+        WS_EX_APPWINDOW, kWindowClass, kWindowTitle,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 480, 285,
-        nullptr, nullptr, instance, nullptr
-    );
+        CW_USEDEFAULT, CW_USEDEFAULT, 560, 475,
+        nullptr, nullptr, instance, nullptr);
     if (g_window == nullptr) return static_cast<int>(GetLastError());
 
-    ShowWindow(g_window, showCommand);
-    UpdateWindow(g_window);
+    const bool startMinimized = commandLine != nullptr &&
+        (wcsstr(commandLine, L"--minimized") != nullptr);
+    if (startMinimized) {
+        addTrayIcon();
+        ShowWindow(g_window, SW_HIDE);
+    } else {
+        ShowWindow(g_window, showCommand);
+        UpdateWindow(g_window);
+    }
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {

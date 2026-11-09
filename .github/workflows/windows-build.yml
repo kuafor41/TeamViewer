@@ -46,6 +46,7 @@ jobs:
           Copy-Item "build-\${{ matrix.arch }}/Release/Acrobat.exe" $package
           Copy-Item "README.md" $package
           Copy-Item "LICENSE" $package
+          Set-Content -Path "$package/portable.flag" -Value ""
           Compress-Archive -Path "$package/*" -DestinationPath "dist/Acrobat-win-\${{ matrix.arch }}-portable.zip" -Force
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
