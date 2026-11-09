@@ -375,7 +375,7 @@ void syncSettingsFromControls() {
     g_settings.pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
     const LRESULT distanceMode = SendMessageW(g_distanceModeCombo, CB_GETCURSEL, 0, 0);
-    g_settings.distanceMode = distanceMode == CB_ERR ? 2 :
+    g_settings.distanceMode = distanceMode == CB_ERR ? g_settings.distanceMode :
         std::clamp(static_cast<int>(distanceMode), 0, 2);
     wchar_t text[64]{};
     GetWindowTextW(g_distanceEdit, text, static_cast<int>(std::size(text)));
@@ -533,7 +533,7 @@ void createControls(HWND window) {
     g_statusFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    g_aboutFont = CreateFontW(-24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_aboutFont = CreateFontW(-22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe Print");
 
@@ -665,7 +665,7 @@ void createControls(HWND window) {
 
     HWND aboutCard = createPageControl(3, L"STATIC",
         L"planned, designed and developed by Altug T.",
-        SS_CENTER | SS_CENTERIMAGE | WS_BORDER, 70, 180, 444, 76, 0);
+        SS_CENTER | SS_CENTERIMAGE | WS_BORDER, 30, 180, 530, 76, 0);
     setControlFont(aboutCard, g_aboutFont != nullptr ? g_aboutFont : g_regularFont);
 
     g_statusLabel = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
