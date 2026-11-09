@@ -163,6 +163,7 @@ std::mt19937 g_random{std::random_device{}()};
 std::wstring g_iniPath;
 
 void updateStatusParts();
+void updateDiagnostics();
 void setStatus(const std::wstring& value) {
     if (g_statusLabel != nullptr) {
         SendMessageW(g_statusLabel, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(value.c_str()));
@@ -416,7 +417,7 @@ void populateControlsFromSettings() {
     SetWindowTextW(g_targetPathEdit, g_settings.targetPath.c_str());
 
     const std::array<int, 4> intervals{0, 5, 15, 30};
-    selected = 0;
+    int selected = 0;
     for (std::size_t index = 0; index < intervals.size(); ++index) {
         if (intervals[index] == g_settings.targetIntervalMinutes) selected = static_cast<int>(index);
     }
