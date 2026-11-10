@@ -1,6 +1,8 @@
 #include "deskawake/motion.hpp"
 #include "deskawake/scheduler.hpp"
+#include <array>
 #include <cmath>
+#include <random>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -35,6 +37,19 @@ void testTrajectory(){
     for(const auto& v:p)require(std::isfinite(v.x)&&std::isfinite(v.y),"trajectory finite");
     const auto repeat=deskawake::generateHumanTrajectory(a,b,o);
     for(std::size_t i=0;i<p.size();++i)require(p[i].x==repeat[i].x&&p[i].y==repeat[i].y,"trajectory seeded");
+}
+void testRandomAngleDistribution(){
+    std::mt19937 random(0xA66E123u),repeat(0xA66E123u);
+    constexpr int n=100000;
+    std::array<int,4> quadrants{};
+    for(int i=0;i<n;++i){
+        const double angle=deskawake::randomAngleDegrees(random);
+        require(angle>=0.0&&angle<360.0,"random angle is in [0, 360)");
+        require(angle==deskawake::randomAngleDegrees(repeat),"random angle seeded sequence");
+        ++quadrants[static_cast<std::size_t>(angle/90.0)];
+    }
+    for(const int count:quadrants)
+        require(count>24000&&count<26000,"random angles cover all four quadrants evenly");
 }
 void testPoisson(){
     deskawake::Scheduler sample({},0xC0FFEEu);
@@ -83,5 +98,5 @@ void testValidation(){
     catch(const std::invalid_argument&){threw=true;}require(threw,"lambda validation");
 }
 }
-int main(){try{testBezier();testSCurve();testPerlin();testTrajectory();testPoisson();testRouter();testEveryRoutedActionMoves();testValidation();std::cout<<"All Acrobat core tests passed.\\n";return 0;}
+int main(){try{testBezier();testSCurve();testPerlin();testTrajectory();testRandomAngleDistribution();testPoisson();testRouter();testEveryRoutedActionMoves();testValidation();std::cout<<"All Acrobat core tests passed.\\n";return 0;}
 catch(const std::exception& e){std::cerr<<"Test failure: "<<e.what()<<'\\n';return 1;}}
