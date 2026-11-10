@@ -6,7 +6,7 @@ Acrobat should behave like a conventional, supportable Windows desktop utility i
 
 The objective is **compatibility and false-positive reduction**, not hiding the process or bypassing endpoint controls. No application can guarantee that every third-party endpoint product will classify it identically; the deliverable is a transparent, signed, documented application that administrators can evaluate and deploy through their normal policy.
 
-## Current 0.3.3 baseline (measured implementation, not a claim of optimized performance)
+## Current 0.3.4 baseline (measured implementation, not a claim of optimized performance)
 
 - The app is a single per-user Win32 GUI process named `Acrobat.exe`; it is not installed as a Windows service.
 - The engine timer is currently configured at 20 ms and starts when the main window is created. The callback continues to run while the session is stopped.
@@ -105,9 +105,10 @@ Collect CPU average and p95, working set/private bytes, thread/handle count, wak
 
 1. **0.3.1/0.3.2 UI and controls:** wider layout, three travel-distance choices and About tab. The existing engine cadence and input-monitoring lifecycle are not changed by these UI additions.
 2. **0.3.3 movement regression:** the 70/30 router now chooses an 8-point fast trajectory or a 28-point full trajectory. Both use the selected distance and angle and both leave the pointer at the new target; there is no longer a 1 px move immediately undone at the same timer event.
-2. **0.4.x resource profile:** instrument idle CPU/wakeups; remove permanent 20 ms polling; scope input monitoring to active use; make diagnostics demand-driven; add regression tests for real and app-generated input.
-3. **0.5.x enterprise packaging:** stable version resources and MSI inventory fields, signed x64/x86 EXE/MSI, SHA-256 manifest, SBOM, administrator deployment/uninstall guide, and release provenance.
-4. **Optional service evaluation:** only if a concrete machine-wide, non-interactive feature is approved. Keep the user-session agent separate and use least privilege plus authenticated IPC.
+3. **0.3.4 Zen mode and direction verification:** optional Zen mode sends a paired, injected 1 px relative movement and its inverse on the normal action interval. `Angle = -1` now uses a shared uniform-angle helper, covered by a deterministic repeatability and four-quadrant distribution test; edge clamping can still shorten or skew the final on-screen vector.
+4. **0.4.x resource profile:** instrument idle CPU/wakeups; remove permanent 20 ms polling; scope input monitoring to active use; make diagnostics demand-driven; add regression tests for real and app-generated input.
+5. **0.5.x enterprise packaging:** stable version resources and MSI inventory fields, signed x64/x86 EXE/MSI, SHA-256 manifest, SBOM, administrator deployment/uninstall guide, and release provenance.
+6. **Optional service evaluation:** only if a concrete machine-wide, non-interactive feature is approved. Keep the user-session agent separate and use least privilege plus authenticated IPC.
 
 ## Microsoft references
 
