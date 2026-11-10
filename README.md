@@ -1,6 +1,6 @@
 # Acrobat
 
-Acrobat 0.3.3 is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
+Acrobat 0.3.4 is an independent Windows desktop utility for pointer control and session power management. It uses original project branding and is not affiliated with Adobe.
 
 ## Current implementation
 
@@ -13,9 +13,10 @@ Acrobat 0.3.3 is an independent Windows desktop utility for pointer control and 
 - Native Windows Jump List tasks for Open, Start session, Stop session, and Exit; commands forward to the existing instance.
 - Local Diagnostics page showing Acrobat process CPU, working set, battery source/level, physical input event count, and session count.
 - Poisson interval formula from the product plan: T_interval = min(89, max(10, Poisson(lambda = 42))).
+- Optional Zen mode: each normal countdown sends an ordered pair of opposite 1 px relative input events; the second reverses the first so the cursor returns to its starting position. It is off by default and works alongside the existing physical-input pause. Apps that filter injected input or implement their own idle detection may not respond to it.
 - 70% fast / 30% full Bézier trajectory routing. Both profiles travel the currently selected distance; the fast route uses 8 points and the full route uses 28 points. Each countdown therefore produces a persistent pointer displacement rather than a 1 px out-and-back twitch.
 - Motion core: cubic Bezier, smoothstep S-curve, seeded 2D Perlin-style noise, Gaussian tremor and overshoot.
-- Three travel-distance modes: random 10–1500 px on every movement, random 10 px to the current virtual-desktop diagonal, or manual 1–1,000,000 px. Angle -1 continues to choose a new random X/Y direction for every movement; out-of-bounds targets are clamped to the usable virtual desktop.
+- Three travel-distance modes: random 10–1500 px on every movement, random 10 px to the current virtual-desktop diagonal, or manual 1–1,000,000 px. Angle -1 samples a fresh uniform heading from 0° to 360° on every route; the curve's bend and tremor are independently seeded. Targets near virtual-screen edges can be clamped, so the final visible direction and distance can be shortened or skewed.
 - The About tab displays “planned, designed and developed by Altug T.” in a Segoe Print handwriting-style font.
 - Weekly schedule with day selection and local start/end times.
 - Session countdown, optional app exit, and optional Windows startup.
