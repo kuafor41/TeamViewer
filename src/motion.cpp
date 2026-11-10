@@ -47,6 +47,10 @@ double perlin2D(double x, double y, std::uint32_t seed) noexcept {
     const double u=fade(fx),v=fade(fy);
     return std::clamp(lerp(lerp(n00,n10,u),lerp(n01,n11,u),v)*1.65,-1.0,1.0);
 }
+double randomAngleDegrees(std::mt19937& random) {
+    std::uniform_real_distribution<double> distribution(0.0, 360.0);
+    return distribution(random);
+}
 std::vector<Point> generateHumanTrajectory(Point start, Point target, const TrajectoryOptions& o) {
     if(o.sample_count<2) throw std::invalid_argument("sample_count must be at least 2");
     if(!std::isfinite(start.x)||!std::isfinite(start.y)||!std::isfinite(target.x)||!std::isfinite(target.y))
