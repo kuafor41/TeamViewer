@@ -70,6 +70,7 @@ enum ControlId : int {
     IdTargetInterval = 2035,
     IdHotkey = 2036,
     IdDistanceMode = 2037,
+    IdZen = 2038,
     IdStatus = 2040,
     IdTrayShow = 2050,
     IdTrayToggle = 2051,
@@ -80,6 +81,7 @@ struct AppSettings {
     bool pointerEnabled{true};
     bool keepAwake{true};
     bool pauseOnBattery{true};
+    bool zenMode{};
     int distancePixels{120};
     int distanceMode{2}; // 0=random 10..1500, 1=screen diagonal, 2=manual
     int angleDegrees{-1};
@@ -103,6 +105,7 @@ HWND g_stopButton{};
 HWND g_pointerCheck{};
 HWND g_powerCheck{};
 HWND g_batteryCheck{};
+HWND g_zenCheck{};
 HWND g_distanceEdit{};
 HWND g_distanceModeCombo{};
 HWND g_manualDistanceLabel{};
@@ -290,6 +293,7 @@ void loadSettings() {
     g_settings.pointerEnabled = readInt(L"General", L"PointerEnabled", 1) != 0;
     g_settings.keepAwake = readInt(L"General", L"KeepAwake", 1) != 0;
     g_settings.pauseOnBattery = readInt(L"General", L"PauseOnBattery", 1) != 0;
+    g_settings.zenMode = readInt(L"General", L"ZenMode", 0) != 0;
     g_settings.distancePixels = std::clamp(readInt(L"Motion", L"DistancePixels", 120), 1, 1000000);
     g_settings.distanceMode = std::clamp(readInt(L"Motion", L"DistanceMode", 2), 0, 2);
     g_settings.angleDegrees = std::clamp(readInt(L"Motion", L"AngleDegrees", -1), -1, 359);
@@ -311,6 +315,7 @@ void saveSettings() {
     writeInt(L"General", L"PointerEnabled", g_settings.pointerEnabled ? 1 : 0);
     writeInt(L"General", L"KeepAwake", g_settings.keepAwake ? 1 : 0);
     writeInt(L"General", L"PauseOnBattery", g_settings.pauseOnBattery ? 1 : 0);
+    writeInt(L"General", L"ZenMode", g_settings.zenMode ? 1 : 0);
     writeInt(L"General", L"Startup", g_settings.startupEnabled ? 1 : 0);
     writeInt(L"Motion", L"DistancePixels", g_settings.distancePixels);
     writeInt(L"Motion", L"DistanceMode", g_settings.distanceMode);
@@ -369,10 +374,18 @@ void updateDistanceModeControls() {
     }
 }
 
+void updateZenModeControls() {
+    if (g_zenCheck == nullptr) return;
+    const bool pointerEnabled = g_pointerCheck != nullptr &&
+        SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    EnableWindow(g_zenCheck, !g_running && pointerEnabled);
+}
+
 void syncSettingsFromControls() {
     g_settings.pointerEnabled = SendMessageW(g_pointerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_settings.keepAwake = SendMessageW(g_powerCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     g_settings.pauseOnBattery = SendMessageW(g_batteryCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    g_settings.zenMode = SendMessageW(g_zenCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
     const LRESULT distanceMode = SendMessageW(g_distanceModeCombo, CB_GETCURSEL, 0, 0);
     g_settings.distanceMode = distanceMode == CB_ERR ? g_settings.distanceMode :
@@ -421,6 +434,7 @@ void populateControlsFromSettings() {
     SendMessageW(g_pointerCheck, BM_SETCHECK, g_settings.pointerEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_powerCheck, BM_SETCHECK, g_settings.keepAwake ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(g_batteryCheck, BM_SETCHECK, g_settings.pauseOnBattery ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(g_zenCheck, BM_SETCHECK, g_settings.zenMode ? BST_CHECKED : BST_UNCHECKED, 0);
 
     wchar_t number[32]{};
     swprintf_s(number, L"%d", g_settings.distancePixels);
@@ -452,6 +466,7 @@ void populateControlsFromSettings() {
         if (intervals[index] == g_settings.targetIntervalMinutes) selected = static_cast<int>(index);
     }
     SendMessageW(g_targetIntervalCombo, CB_SETCURSEL, selected, 0);
+    updateZenModeControls();
 }
 
 bool parseTime(const std::wstring& value, int& minutes) {
@@ -521,6 +536,7 @@ void setEnabledState() {
         if (id != IdStart && id != IdStop) EnableWindow(control, !g_running);
     }
     updateDistanceModeControls();
+    updateZenModeControls();
 }
 
 void createControls(HWND window) {
@@ -575,6 +591,8 @@ void createControls(HWND window) {
         WS_TABSTOP | BS_AUTOCHECKBOX, 240, 116, 220, 24, IdPower);
     g_batteryCheck = createPageControl(0, L"BUTTON", L"Pause on battery or below 20%",
         WS_TABSTOP | BS_AUTOCHECKBOX, 30, 147, 240, 24, IdBattery);
+    g_zenCheck = createPageControl(0, L"BUTTON", L"Zen mode",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 290, 147, 130, 24, IdZen);
 
     createPageControl(0, L"STATIC", L"Travel distance", SS_LEFT,
         30, 190, 112, 22, 0);
@@ -603,7 +621,7 @@ void createControls(HWND window) {
     g_autoExitCheck = createPageControl(0, L"BUTTON", L"Exit when finished",
         WS_TABSTOP | BS_AUTOCHECKBOX, 315, 268, 160, 24, IdAutoExit);
     createPageControl(0, L"STATIC",
-        L"Physical input pauses pointer movement; Ctrl+Shift+J toggles the session.",
+        L"Physical input pauses pointer movement; Zen uses a paired 1 px pulse and returns the cursor.",
         SS_LEFT, 30, 310, 440, 34, 0);
 
     g_scheduleCheck = createPageControl(1, L"BUTTON", L"Enable weekly schedule",
@@ -818,6 +836,45 @@ bool sendAbsoluteMove(deskawake::Point point) {
     return SendInput(1, &input, sizeof(INPUT)) == 1;
 }
 
+bool sendZenPulse() {
+    POINT current{};
+    if (!GetCursorPos(&current)) return false;
+
+    const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int width = std::max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN));
+    const int height = std::max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+    const int right = left + width - 1;
+    const int bottom = top + height - 1;
+
+    LONG deltaX = 0;
+    LONG deltaY = 0;
+    if (width > 1) {
+        deltaX = current.x >= right ? -1L : 1L;
+    } else if (height > 1) {
+        deltaY = current.y >= bottom ? -1L : 1L;
+    } else {
+        return false;
+    }
+
+    // Send both injected events as one ordered batch; the second reverses the first.
+    INPUT inputs[2]{};
+    for (std::size_t index = 0; index < std::size(inputs); ++index) {
+        inputs[index].type = INPUT_MOUSE;
+        inputs[index].mi.dx = index == 0 ? deltaX : -deltaX;
+        inputs[index].mi.dy = index == 0 ? deltaY : -deltaY;
+        inputs[index].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE;
+    }
+
+    const UINT sent = SendInput(static_cast<UINT>(std::size(inputs)), inputs, sizeof(INPUT));
+    if (sent == std::size(inputs)) return true;
+    if (sent == 1) {
+        // Recover the cursor if Windows accepted only the first half of the pair.
+        (void)SendInput(1, &inputs[1], sizeof(INPUT));
+    }
+    return false;
+}
+
 bool beginHumanPath(std::size_t sampleCount) {
     POINT current{};
     if (!GetCursorPos(&current)) return false;
@@ -850,8 +907,7 @@ bool beginHumanPath(std::size_t sampleCount) {
     for (int attempt = 0; attempt < 8 && !targetValid; ++attempt) {
         double angleDegrees = static_cast<double>(g_settings.angleDegrees);
         if (g_settings.angleDegrees < 0) {
-            std::uniform_real_distribution<double> randomAngle(0.0, 360.0);
-            angleDegrees = randomAngle(g_random);
+            angleDegrees = deskawake::randomAngleDegrees(g_random);
         }
         const double angle = angleDegrees * kPi / 180.0;
         target = {
@@ -956,6 +1012,16 @@ void updateRunningState() {
             static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
     }
     if (now >= g_nextActionAt) {
+        if (g_settings.zenMode) {
+            const bool sent = sendZenPulse();
+            g_nextActionAt = now +
+                static_cast<ULONGLONG>(g_scheduler.nextDelaySeconds()) * 1000ULL;
+            setStatus(sent
+                ? L"Session active; Zen pulse completed (cursor returned to origin)"
+                : L"Session active; Windows rejected Zen input");
+            return;
+        }
+
         const deskawake::ActionKind action = g_scheduler.nextAction();
         const std::size_t sampleCount = deskawake::trajectorySampleCount(action);
         if (!beginHumanPath(sampleCount)) {
@@ -1335,6 +1401,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE ||
             HIWORD(wParam) == EN_KILLFOCUS) {
             saveFromUi();
+            if (LOWORD(wParam) == IdPointer) updateZenModeControls();
             if (LOWORD(wParam) == IdDistanceMode) {
                 updateDistanceModeControls();
             }
