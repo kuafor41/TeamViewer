@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <vector>
 namespace deskawake {
 struct Point { double x{}; double y{}; };
@@ -15,6 +16,7 @@ struct TrajectoryOptions {
 // Smoothstep S-curve: 3t^2 - 2t^3, clamped to [0, 1].
 [[nodiscard]] double sCurve(double t) noexcept;
 [[nodiscard]] double perlin2D(double x, double y, std::uint32_t seed) noexcept;
+[[nodiscard]] double randomAngleDegrees(std::mt19937& random);
 [[nodiscard]] std::vector<Point> generateHumanTrajectory(
     Point start, Point target, const TrajectoryOptions& options = {});
 } // namespace deskawake
