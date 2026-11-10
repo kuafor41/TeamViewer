@@ -1,0 +1,18 @@
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/Testing/
+/.vs/
+/out/
+/dist/
+*.user
+*.pdb
+*.ilk
+*.obj
+*.exe
+
+# Local .NET/WiX tool cache
+/.tools/
+/bin/
+/obj/

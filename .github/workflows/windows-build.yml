@@ -1,0 +1,81 @@
+name: Windows x64 and x86 builds
+
+on:
+  push:
+    branches:
+      - main
+      - feature/deskawake-windows-foundation
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acrobat-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            cmake_arch: x64
+            wix_arch: x64
+            upgrade_code: "{B4F29BC8-5A7B-4C1C-9B03-5CDB44E6D2A1}"
+          - arch: x86
+            cmake_arch: Win32
+            wix_arch: x86
+            upgrade_code: "{C8E8CFA4-168B-4DAB-897B-22C6C99A5E4F}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build-${{ matrix.arch }} -A ${{ matrix.cmake_arch }} -DACROBAT_BUILD_TESTS=ON
+      - name: Build Release
+        run: cmake --build build-${{ matrix.arch }} --config Release --parallel
+      - name: Run core tests
+        run: ctest --test-dir build-${{ matrix.arch }} -C Release --output-on-failure
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $package = "dist/Acrobat-${{ matrix.arch }}-portable"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "build-${{ matrix.arch }}/Release/Acrobat.exe" $package
+          Copy-Item "README.md" $package
+          Copy-Item "LICENSE" $package
+          Set-Content -Path "$package/portable.flag" -Value ""
+          Compress-Archive -Path "$package/*" -DestinationPath "dist/Acrobat-win-${{ matrix.arch }}-portable.zip" -Force
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Acrobat-win-${{ matrix.arch }}-portable
+          path: dist/Acrobat-win-${{ matrix.arch }}-portable.zip
+          if-no-files-found: error
+
+      - name: Install WiX Toolset
+        run: dotnet tool install --tool-path ./.tools wix --version 5.0.2
+
+      - name: Build per-user MSI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $exe = (Resolve-Path "build-${{ matrix.arch }}/Release/Acrobat.exe").Path
+          $readme = (Resolve-Path "README.md").Path
+          $license = (Resolve-Path "LICENSE").Path
+          $icon = (Resolve-Path "resources/acrobat.ico").Path
+          ./.tools/wix.exe build -arch ${{ matrix.wix_arch }} -d "ExePath=$exe" -d "ReadmePath=$readme" -d "LicensePath=$license" -d "IconPath=$icon" -d "UpgradeCode=${{ matrix.upgrade_code }}" -o "dist/Acrobat-win-${{ matrix.arch }}.msi" "installer/Acrobat.wxs"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Acrobat-win-${{ matrix.arch }}-msi
+          path: dist/Acrobat-win-${{ matrix.arch }}.msi
+          if-no-files-found: error
+

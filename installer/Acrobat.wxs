@@ -1,0 +1,56 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Acrobat"
+    Manufacturer="Acrobat Project"
+    Version="0.3.4"
+    UpgradeCode="$(var.UpgradeCode)"
+    Scope="perUser">
+
+    <SummaryInformation Description="Acrobat desktop utility" Manufacturer="Acrobat Project" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Acrobat is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AcrobatProductIcon" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AcrobatProductIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/kuafor41/TeamViewer" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Acrobat">
+          <Component Id="AcrobatApplicationFiles" Guid="*">
+            <File Id="AcrobatExecutable" Source="$(var.ExePath)" KeyPath="yes" />
+            <File Id="AcrobatReadme" Source="$(var.ReadmePath)" />
+            <File Id="AcrobatLicense" Source="$(var.LicensePath)" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AcrobatProgramMenuFolder" Name="Acrobat">
+        <Component Id="AcrobatStartMenuShortcut" Guid="*">
+          <Shortcut
+            Id="AcrobatStartMenuLink"
+            Name="Acrobat"
+            Description="Acrobat desktop utility"
+            Target="[INSTALLFOLDER]Acrobat.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="AcrobatProductIcon" />
+          <RemoveFolder Id="RemoveAcrobatProgramMenuFolder" On="uninstall" />
+          <RegistryValue
+            Root="HKCU"
+            Key="Software\Acrobat"
+            Name="StartMenuShortcut"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Acrobat" Level="1">
+      <ComponentRef Id="AcrobatApplicationFiles" />
+      <ComponentRef Id="AcrobatStartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
